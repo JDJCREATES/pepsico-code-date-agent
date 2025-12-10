@@ -6,23 +6,19 @@ interface DemoControlsProps {
   onStart?: () => void;
   onStop?: () => void;
   onReset?: () => void;
+  isRunning?: boolean;
 }
 
-export default function DemoControls({ onStart, onStop, onReset }: DemoControlsProps) {
-  const [isRunning, setIsRunning] = useState(false);
-
+export default function DemoControls({ onStart, onStop, onReset, isRunning = false }: DemoControlsProps) {
   const handleStart = () => {
-    setIsRunning(true);
     onStart?.();
   };
 
   const handleStop = () => {
-    setIsRunning(false);
     onStop?.();
   };
 
   const handleReset = () => {
-    setIsRunning(false);
     onReset?.();
   };
 
@@ -35,20 +31,20 @@ export default function DemoControls({ onStart, onStop, onReset }: DemoControlsP
         <button
           onClick={handleStart}
           disabled={isRunning}
-          className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-zinc-400 disabled:cursor-not-allowed"
+          className="px-4 py-2 bg-cyan-600 text-white rounded hover:bg-cyan-700 disabled:bg-zinc-400 disabled:cursor-not-allowed"
         >
           Start Analysis
         </button>
         <button
           onClick={handleStop}
           disabled={!isRunning}
-          className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:bg-zinc-400 disabled:cursor-not-allowed"
+          className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:bg-zinc-300 disabled:cursor-not-allowed"
         >
           Stop
         </button>
         <button
           onClick={handleReset}
-          className="px-4 py-2 bg-zinc-600 text-white rounded hover:bg-zinc-700"
+          className="px-4 py-2 bg-orange-600 text-white rounded hover:bg-orange-700"
         >
           Reset
         </button>

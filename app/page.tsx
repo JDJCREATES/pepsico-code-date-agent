@@ -15,7 +15,7 @@ export default function Home() {
   const [currentImage, setCurrentImage] = useState<string | null>(null);
   const [finalDecision, setFinalDecision] = useState<string | null>(null);
 
-  const startDemop = async (scenario: string) => {
+  const startDemo = async (scenario: string) => {
     setIsRunning(true);
     setAgentSteps([]);
     setFinalDecision(null);
@@ -76,34 +76,53 @@ export default function Home() {
           
           {/* Mobile agent steps above camera */}
           <div className="md:hidden mb-4 max-h-[40vh] overflow-auto">
-            <AgentBoard />
+            <AgentBoard steps={agentSteps} />
           </div>
           
           <div className="flex-1">
-            <CameraFeed />
+            <CameraFeed currentImage={currentImage} />
           </div>
         </section>
 
         {/* Right side - Agent Board, Final Decision, Controls (Desktop only) */}
         <section className="hidden md:flex flex-1 flex-col gap-4">
           <div className="flex-1 overflow-auto">
-            <AgentBoard />
+            <AgentBoard steps={agentSteps} />
           </div>
           <div className="w-full">
-            <FinalDecision />
+            <FinalDecision decision={finalDecision ? { status: finalDecision as any, reason: finalDecision } : undefined} />
           </div>
           <div className="w-full">
-            <DemoControls />
+            <DemoControls 
+              onStart={() => startDemo('default')}
+              onStop={() => setIsRunning(false)}
+              onReset={() => {
+                setAgentSteps([]);
+                setFinalDecision(null);
+                setCurrentImage(null);
+                setIsRunning(false);
+              }}
+            />
           </div>
         </section>
 
         {/* Mobile bottom section */}
         <section className="md:hidden flex flex-col gap-4">
           <div className="w-full">
-            <FinalDecision />
+            <FinalDecision decision={finalDecision ? { status: finalDecision as any, reason: finalDecision } : undefined} />
           </div>
           <div className="w-full">
-            <DemoControls />
+            <DemoControls
+              isRunning={isRunning}
+              onStart={() => startDemo('default')}
+              onStop={() => setIsRunning(false)}
+              onReset={() => {
+                setAgentSteps([]);
+                setFinalDecision(null);
+                setCurrentImage(null);
+                setIsRunning(false);
+              }}
+            />
           </div>
           <div className="mt-4 pb-4">
             <h1 className="mb-2 text-2xl font-bold text-zinc-900 dark:text-white">
