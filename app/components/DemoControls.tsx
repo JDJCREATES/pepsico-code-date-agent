@@ -33,7 +33,7 @@ export default function DemoControls({ onStart, onStop, onReset, isRunning = fal
           disabled={isRunning}
           className="px-4 py-2 bg-cyan-600 text-white rounded hover:bg-cyan-700 disabled:bg-zinc-400 disabled:cursor-not-allowed"
         >
-          Start Analysis
+          Start Demo
         </button>
         <button
           onClick={handleStop}
