@@ -1,17 +1,10 @@
 'use client';
 
-import { AgentStep } from '@/app/components/AgentStep';
-
-export interface Step {
-  id: string;
-  timestamp: Date;
-  action: string;
-  status: 'running' | 'completed' | 'error';
-  details?: string;
-}
+import { AgentStep as AgentStepComponent } from '@/app/components/AgentStep';
+import { AgentStep } from '@/app/types/agent';
 
 interface AgentBoardProps {
-  steps?: Step[];
+  steps?: AgentStep[];
 }
 
 export default function AgentBoard({ steps = [] }: AgentBoardProps) {
@@ -25,7 +18,7 @@ export default function AgentBoard({ steps = [] }: AgentBoardProps) {
           <p className="text-zinc-500 text-sm">No steps yet. Start the analysis to see agent reasoning.</p>
         ) : (
           steps.map((step) => (
-            <AgentStep key={step.id} step={step} />
+            <AgentStepComponent key={step.id} step={step} />
           ))
         )}
       </div>

@@ -1,62 +1,94 @@
 "use client";
 
-import { use, useState } from "react";
+import { useState } from "react";
 import DemoControls from "./components/DemoControls";
 import AgentBoard from "./components/AgentBoard";
 import CameraFeed from "./components/CameraFeed";
 import FinalDecision from "./components/FinalDecision";
-
-import Image from "next/image";
-import { Step } from "./components/AgentBoard";
+import { AgentStep, FinalDecision as FinalDecisionType, StreamMessage } from "./types/agent";
 
 export default function Home() {
   const [isRunning, setIsRunning] = useState(false);
-  const [agentSteps, setAgentSteps] = useState<Array<Step>>([]);
+  const [agentSteps, setAgentSteps] = useState<AgentStep[]>([]);
   const [currentImage, setCurrentImage] = useState<string | null>(null);
-  const [finalDecision, setFinalDecision] = useState<string | null>(null);
+  const [finalDecision, setFinalDecision] = useState<FinalDecisionType | null>(null);
+  const [bagCounter, setBagCounter] = useState(0);
 
   const startDemo = async (scenario: string) => {
     setIsRunning(true);
     setAgentSteps([]);
     setFinalDecision(null);
+    setBagCounter(0);
 
-    // call api with streaming response @JDJCREATES
-    const response = await fetch("/api/demo", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ scenario }),
-    });
+    // TODO: Load actual images from public/images folder
+    // For now, using placeholder
+    const demoImageBase64 = "placeholder_base64_image_data";
+    setCurrentImage('/images/good/sample-1.jpg'); // Update with real path
 
-    const reader = response.body?.getReader();
-    const decoder = new TextDecoder("utf-8");
-    let done = false;
+    try {
+      const response = await fetch("/api/demo", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ 
+          scenario,
+          imageBase64: demoImageBase64
+        }),
+      });
 
-    while (!done && reader) {
-      const { value, done: doneReading } = await reader.read();
-      done = doneReading;
-      const chunkValue = decoder.decode(value);
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let buffer = '';
 
-      // Parse chunkValue as JSON and update state accordingly
-      try {
-        const data = JSON.parse(chunkValue);
+      while (reader) {
+        const { value, done } = await reader.read();
+        if (done) break;
 
-        if (data.step) {
-          setAgentSteps((prevSteps) => [...prevSteps, data.step]);
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const message: StreamMessage = JSON.parse(line.slice(6));
+              
+              if (message.type === 'step' && message.step) {
+                setAgentSteps((prev) => {
+                  const existing = prev.findIndex(s => s.id === message.step!.id);
+                  if (existing >= 0) {
+                    const updated = [...prev];
+                    updated[existing] = message.step!;
+                    return updated;
+                  }
+                  return [...prev, message.step!];
+                });
+              }
+              
+              if (message.type === 'decision' && message.decision) {
+                setFinalDecision(message.decision);
+                setBagCounter(prev => prev + 1);
+              }
+
+              if (message.type === 'image' && message.image) {
+                setCurrentImage(message.image);
+              }
+
+              if (message.type === 'error') {
+                console.error('Stream error:', message.error);
+              }
+            } catch (error) {
+              console.error("Error parsing SSE message:", error);
+            }
+          }
         }
-        if (data.finalDecision) {
-          setFinalDecision(data.finalDecision);
-        }
-        if (data.image) {
-          setCurrentImage(data.image);
-        }
-      } catch (error) {
-        console.error("Error parsing chunk:", error);
       }
+    } catch (error) {
+      console.error("Stream error:", error);
+    } finally {
+      setIsRunning(false);
     }
-
-    setIsRunning(false);
   };
 
   return (
@@ -80,7 +112,7 @@ export default function Home() {
           </div>
           
           <div className="flex-1">
-            <CameraFeed currentImage={currentImage} />
+            <CameraFeed currentImage={currentImage} bagCounter={bagCounter} />
           </div>
         </section>
 
@@ -90,7 +122,7 @@ export default function Home() {
             <AgentBoard steps={agentSteps} />
           </div>
           <div className="w-full">
-            <FinalDecision decision={finalDecision ? { status: finalDecision as any, reason: finalDecision } : undefined} />
+            <FinalDecision decision={finalDecision} />
           </div>
           <div className="w-full">
             <DemoControls 
@@ -109,7 +141,7 @@ export default function Home() {
         {/* Mobile bottom section */}
         <section className="md:hidden flex flex-col gap-4">
           <div className="w-full">
-            <FinalDecision decision={finalDecision ? { status: finalDecision as any, reason: finalDecision } : undefined} />
+            <FinalDecision decision={finalDecision} />
           </div>
           <div className="w-full">
             <DemoControls

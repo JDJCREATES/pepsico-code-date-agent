@@ -1,17 +1,13 @@
 'use client';
 
-interface Decision {
-  status: 'pass' | 'fail' | 'pending';
-  reason?: string;
-  confidence?: number;
-}
+import { FinalDecision as FinalDecisionType } from '@/app/types/agent';
 
 interface FinalDecisionProps {
-  decision?: Decision;
+  decision?: FinalDecisionType | null;
 }
 
 export default function FinalDecision({ decision }: FinalDecisionProps) {
-  const getStatusColor = (status: Decision['status']) => {
+  const getStatusColor = (status: FinalDecisionType['status']) => {
     switch (status) {
       case 'pass':
         return 'bg-green-100 border-green-500 text-green-900 dark:bg-green-900/20 dark:text-green-400';
@@ -36,6 +32,16 @@ export default function FinalDecision({ decision }: FinalDecisionProps) {
         </div>
         {decision?.reason && (
           <p className="text-sm mt-2">{decision.reason}</p>
+        )}
+        {decision?.violations && decision.violations.length > 0 && decision.violations[0] !== 'none' && (
+          <div className="mt-3 pt-3 border-t border-current/20">
+            <p className="text-xs font-semibold mb-1">Violations:</p>
+            <ul className="text-xs space-y-1">
+              {decision.violations.map((v, i) => (
+                <li key={i}>• {v.replace(/_/g, ' ').toUpperCase()}</li>
+              ))}
+            </ul>
+          </div>
         )}
       </div>
     </div>
