@@ -23,7 +23,7 @@ export default function DemoControls({ onStart, onStop, onReset, isRunning = fal
   };
 
   return (
-    <div className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
+    <div className="w-full rounded-b-sm border border-zinc-200 dark:border-zinc-800 p-4">
       <h2 className="mb-4 text-lg font-semibold text-zinc-900 dark:text-white">
         Controls
       </h2>

@@ -83,7 +83,7 @@ export class CodeDateAgent {
     await this.wait(400);
   }
 
-  async analyzeImage(imageBase64: string, expectedViolation?: ViolationType): Promise<FinalDecision> {
+  async analyzeImage(imageBase64: string, metadata?: { expectedViolations?: ViolationType[], productType?: string }): Promise<FinalDecision> {
     try {
       // Step 1: Image Acquisition
       await this.emitStep('image-acquisition', 'running', 'Loading image from camera feed...');
@@ -101,17 +101,33 @@ export class CodeDateAgent {
 
       const ocrPrompt = `Analyze this product image from a Frito-Lay/PepsiCo factory floor.
 
-Extract ALL text visible on the packaging, specifically looking for:
+CRITICAL: Look for these quality issues:
+1. Code date position relative to bellmark (the quality seal)
+2. Print quality (faded, smudged, unclear)
+3. Code date type (84-day vs 90-day shelf life)
+4. Price marking presence
+
+Extract ALL text visible on the packaging:
 - PMO number (production facility code, often 4-6 digits)
 - Date (various formats: MM/DD/YYYY, DDMMMYY, etc.)
 - Time stamp (HH:MM format)
+- Shelf life indicator (84 or 90 day)
+- Price marking (if visible)
 
-Return a JSON object with this structure:
+Also assess:
+- Is code date properly positioned near bellmark? (not too far, NOT on bellmark itself)
+- Is print quality acceptable? (clear, not faded)
+
+Return a JSON object:
 {
   "fullText": "all text you can see",
   "pmoNumber": "extracted PMO or null",
   "date": "extracted date or null", 
-  "time": "extracted time or null"
+  "time": "extracted time or null",
+  "shelfLifeDays": 84 or 90 or null,
+  "hasPriceMarking": true/false,
+  "codeDatePosition": "correct" | "off_bellmark" | "on_bellmark",
+  "printQuality": "good" | "faded" | "unreadable"
 }`;
 
       const ocrResponse = await this.model.invoke([
@@ -128,8 +144,10 @@ Return a JSON object with this structure:
       ]);
 
       let extractedData: ExtractedData = {};
+      let parsed: any = {};
+      
       try {
-        const parsed = JSON.parse(ocrResponse.content.toString());
+        parsed = JSON.parse(ocrResponse.content.toString());
         extractedData = {
           fullText: parsed.fullText,
           pmoNumber: parsed.pmoNumber,
@@ -138,6 +156,7 @@ Return a JSON object with this structure:
         };
       } catch {
         extractedData = { fullText: "OCR extraction failed" };
+        parsed = { codeDatePosition: 'correct', printQuality: 'good' };
       }
 
       await this.emitFunctionCall('extractCodeDate', {}, extractedData);
@@ -160,22 +179,58 @@ Return a JSON object with this structure:
         extractedData
       );
 
-      // Step 4: Component Validation
-      await this.emitStep('component-validation', 'running', 'Validating required components...');
+      // Step 4: Component Validation & Quality Checks
+      await this.emitStep('component-validation', 'running', 'Validating components and quality standards...');
       
       const violations: ViolationType[] = [];
+      
+      // Check for missing components
       if (!extractedData.pmoNumber) violations.push('missing_pmo');
       if (!extractedData.date) violations.push('missing_date');
       if (!extractedData.time) violations.push('missing_time');
 
-      const hasAllComponents = violations.length === 0;
+      // Check positioning (CRITICAL - automatic hold if on bellmark)
+      if (parsed.codeDatePosition === 'on_bellmark') {
+        violations.push('code_date_on_bellmark');
+      } else if (parsed.codeDatePosition === 'off_bellmark') {
+        violations.push('code_date_off_bellmark');
+      }
+
+      // Check print quality
+      if (parsed.printQuality === 'faded' || parsed.printQuality === 'unreadable') {
+        violations.push('faded_print');
+      }
+
+      // Check shelf life type vs expected (if metadata provided)
+      if (metadata?.productType && parsed.shelfLifeDays) {
+        const expectedDays = metadata.productType.startsWith('84') ? 84 : 90;
+        if (parsed.shelfLifeDays !== expectedDays) {
+          violations.push('wrong_code_type');
+        }
+      }
+
+      // Check price marking vs expected (if metadata provided)
+      if (metadata?.productType) {
+        const shouldHavePrice = metadata.productType.includes('_price');
+        if (shouldHavePrice !== parsed.hasPriceMarking) {
+          violations.push('wrong_price_marking');
+        }
+      }
+
+      const hasAllComponents = !violations.some(v => 
+        ['missing_pmo', 'missing_date', 'missing_time'].includes(v)
+      );
+
+      const criticalViolations = violations.filter(v => 
+        ['code_date_on_bellmark', 'faded_print'].includes(v)
+      );
 
       await this.emitStep(
         'component-validation',
-        hasAllComponents ? 'completed' : 'error',
-        hasAllComponents
-          ? 'All required components present: PMO ✓, Date ✓, Time ✓'
-          : `Missing components: ${violations.join(', ')}`
+        violations.length === 0 ? 'completed' : (criticalViolations.length > 0 ? 'error' : 'error'),
+        violations.length === 0
+          ? 'All quality standards met: Components ✓, Position ✓, Print Quality ✓'
+          : `Violations detected: ${violations.map(v => v.replace(/_/g, ' ')).join(', ')}`
       );
 
       // Step 5: Date Logic Validation

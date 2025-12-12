@@ -8,7 +8,7 @@ export async function POST(request: NextRequest) {
   const encoder = new TextEncoder();
   
   try {
-    const { scenario, imageBase64 } = await request.json();
+    const { scenario, imageBase64, metadata } = await request.json();
 
     const stream = new ReadableStream({
       async start(controller) {
@@ -46,8 +46,8 @@ export async function POST(request: NextRequest) {
             },
           });
 
-          // Run the agent analysis
-          await agent.analyzeImage(imageBase64);
+          // Run the agent analysis with metadata
+          await agent.analyzeImage(imageBase64, metadata);
 
           controller.close();
         } catch (error) {

@@ -58,14 +58,14 @@ export const AgentStep = ({ step }: AgentStepProps) => {
             </div>
           </div>
           {step.reasoning && (
-            <p className="text-xs text-zinc-700 dark:text-zinc-300 mt-2 bg-white/50 dark:bg-black/20 p-2 rounded">
+            <p className="text-xs text-zinc-700 dark:text-zinc-300 mt-2 bg-white/50 dark:bg-black/20 p-2 rounded-b-sm">
               💭 {step.reasoning}
             </p>
           )}
           {step.extractedData && (
             <div className="mt-2 text-xs">
               <p className="font-medium text-zinc-600 dark:text-zinc-400">Extracted Data:</p>
-              <pre className="mt-1 p-2 bg-zinc-100 dark:bg-zinc-800 rounded text-xs overflow-x-auto">
+              <pre className="mt-1 p-2 bg-zinc-100 dark:bg-zinc-800 rounded-b-sm text-xs overflow-x-auto">
                 {JSON.stringify(step.extractedData, null, 2)}
               </pre>
             </div>

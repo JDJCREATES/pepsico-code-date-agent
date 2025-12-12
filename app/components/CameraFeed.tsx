@@ -11,7 +11,7 @@ interface CameraFeedProps {
  const CameraFeed = ({ currentImage, bagCounter = 0 }: CameraFeedProps) => {
 
   return (
-    <div className="w-full rounded-lg border-2 border-zinc-200 bg-zinc-100 p-4 dark:border-zinc-700 dark:bg-zinc-800">
+    <div className="w-full rounded-b-sm border-2 border-zinc-200 bg-zinc-100 p-4 dark:border-zinc-700 dark:bg-zinc-800">
       <div className="flex justify-between items-center mb-2">
         <h3 className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">
           Camera Feed - Line 3
