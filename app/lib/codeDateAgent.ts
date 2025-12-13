@@ -1,33 +1,123 @@
 import { ChatOpenAI } from "@langchain/openai";
+import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { AgentStep, FunctionCall, FinalDecision, ViolationType, ExtractedData } from "../types/agent";
-import { AGENT_STEPS, StepId } from "./agentSteps";
+import { AgentStep, FinalDecision, ViolationType, ExtractedData, AgentAction, AgentReasoning } from "../types/agent";
+import { AGENT_STEPS, StepId, BUSINESS_DATA } from "./agentSteps";
 
-// Tool schemas for function calling
-const ExtractCodeDateSchema = z.object({
-  imageBase64: z.string(),
-}).describe("Extract code date text from product image using OCR");
+// LangChain tools for business decision-making
+const calculateBusinessImpactTool = tool(
+  async ({ action, violationSeverity, plantCode }: { action: AgentAction, violationSeverity: string, plantCode: string }) => {
+    let estimatedCost = 0;
+    let riskLevel: 'low' | 'medium' | 'high' | 'critical' = 'low';
+    let recommendation = '';
 
-const ParseCodeDateSchema = z.object({
-  rawText: z.string(),
-}).describe("Parse PMO number, date, and time from raw OCR text");
+    if (action === 'stop_line') {
+      estimatedCost = BUSINESS_DATA.lineStopCost;
+      riskLevel = violationSeverity === 'critical' ? 'critical' : 'high';
+      recommendation = `Line stop costs $${estimatedCost}/hr but prevents potential $${BUSINESS_DATA.violationFineRisk} fine`;
+    } else if (action === 'alert_qa') {
+      estimatedCost = BUSINESS_DATA.qaAlertCost;
+      riskLevel = violationSeverity === 'critical' ? 'high' : 'medium';
+      recommendation = `QA alert is cost-effective at $${estimatedCost}, suitable for non-critical issues`;
+    } else if (action === 'hold_batch') {
+      estimatedCost = BUSINESS_DATA.lineStopCost * 0.25;
+      riskLevel = 'medium';
+      recommendation = `Batch hold balances cost vs risk for moderate violations`;
+    } else {
+      estimatedCost = 0;
+      riskLevel = 'low';
+      recommendation = 'No action needed, product meets standards';
+    }
 
-const ValidateDateSchema = z.object({
-  date: z.string(),
-  pmoNumber: z.string().optional(),
-  time: z.string().optional(),
-}).describe("Validate code date against freshness and compliance standards");
+    const plantName = BUSINESS_DATA.plantCodes[plantCode as keyof typeof BUSINESS_DATA.plantCodes] || 'Unknown Plant';
+
+    return {
+      action,
+      estimatedCost,
+      riskLevel,
+      recommendation,
+      plantInfo: `${plantName} (Code: ${plantCode})`,
+    };
+  },
+  {
+    name: "calculate_business_impact",
+    description: "Calculate business impact and cost of actions: stop_line (expensive but safe), alert_qa (cheap but riskier), hold_batch (moderate), or continue (free)",
+    schema: z.object({
+      action: z.enum(['continue', 'alert_qa', 'stop_line', 'hold_batch']),
+      violationSeverity: z.string(),
+      plantCode: z.string(),
+    }),
+  }
+);
+
+const queryHistoricalIncidentsTool = tool(
+  async ({ plantCode, lineNumber, daysBack }: { plantCode: string, lineNumber: string, daysBack: number }) => {
+    const incidents = [
+      { date: '2024-12-01', type: 'faded_print', action: 'alert_qa', resolved: true },
+      { date: '2024-11-15', type: 'code_date_off_bellmark', action: 'alert_qa', resolved: true },
+      { date: '2024-10-28', type: 'code_date_on_bellmark', action: 'stop_line', resolved: true },
+    ];
+
+    const recentCritical = incidents.filter(i => i.type === 'code_date_on_bellmark').length;
+    const totalIncidents = incidents.length;
+
+    return {
+      totalIncidents,
+      recentCritical,
+      pattern: recentCritical > 0 ? 'Recurring critical positioning issues' : 'Minor quality issues, no critical pattern',
+      lastCriticalDate: recentCritical > 0 ? '2024-10-28' : 'None',
+      recommendation: recentCritical > 1 ? 'Line needs maintenance - recommend proactive stop' : 'Standard monitoring adequate',
+      incidents: incidents.slice(0, 3),
+    };
+  },
+  {
+    name: "query_historical_incidents",
+    description: "Query past quality violations for this production line. Returns incident history, patterns, and recommendations based on historical data.",
+    schema: z.object({
+      plantCode: z.string(),
+      lineNumber: z.string(),
+      daysBack: z.number(),
+    }),
+  }
+);
+
+const logViolationTool = tool(
+  async ({ violationType, plantCode, lineNumber, severity, imageId }: { 
+    violationType: string, plantCode: string, lineNumber: string, severity: string, imageId: string 
+  }) => {
+    const logId = `LOG-${Date.now()}`;
+    const timestamp = new Date().toISOString();
+
+    return {
+      success: true,
+      logId,
+      timestamp,
+      message: `Logged to QMS: ${violationType} (${severity})`,
+      database: 'PepsiCo-QMS-Production',
+    };
+  },
+  {
+    name: "log_violation_to_database",
+    description: "Log quality violation to production database for compliance tracking and auditing.",
+    schema: z.object({
+      violationType: z.string(),
+      plantCode: z.string(),
+      lineNumber: z.string(),
+      severity: z.string(),
+      imageId: z.string(),
+    }),
+  }
+);
 
 export interface AgentCallbacks {
   onStepUpdate: (step: AgentStep) => void;
-  onFunctionCall: (call: FunctionCall) => void;
   onDecision: (decision: FinalDecision) => void;
 }
 
 export class CodeDateAgent {
   private model: ChatOpenAI;
   private callbacks: AgentCallbacks;
-  private currentStepStart: Date | null = null;
+  private tools = [calculateBusinessImpactTool, queryHistoricalIncidentsTool, logViolationTool];
 
   constructor(callbacks: AgentCallbacks) {
     this.model = new ChatOpenAI({
@@ -42,99 +132,53 @@ export class CodeDateAgent {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
-  private async emitStep(
-    stepId: StepId,
-    status: AgentStep['status'],
-    reasoning: string,
-    extractedData?: ExtractedData
-  ) {
-    const stepDef = AGENT_STEPS.find(s => s.id === stepId);
-    if (!stepDef) return;
-
-    const duration = this.currentStepStart 
-      ? Date.now() - this.currentStepStart.getTime() 
-      : undefined;
-
-    const step: AgentStep = {
-      id: stepId,
-      name: stepDef.name,
-      description: stepDef.description,
-      status,
-      timestamp: new Date(),
-      reasoning,
-      extractedData,
-      duration,
-    };
-
+  private async emitStep(step: AgentStep) {
     this.callbacks.onStepUpdate(step);
-    
-    if (status === 'running') {
-      this.currentStepStart = new Date();
-    } else {
-      this.currentStepStart = null;
-    }
-
-    await this.wait(800); // Simulate processing time for visibility
-  }
-
-  private async emitFunctionCall(name: string, args: any, result?: any) {
-    const call: FunctionCall = { name, args, result };
-    this.callbacks.onFunctionCall(call);
     await this.wait(400);
   }
 
-  async analyzeImage(imageBase64: string, metadata?: { expectedViolations?: ViolationType[], productType?: string }): Promise<FinalDecision> {
+  async analyzeImage(imageBase64: string, bagNumber: number): Promise<FinalDecision> {
     try {
-      // Step 1: Image Acquisition
-      await this.emitStep('image-acquisition', 'running', 'Loading image from camera feed...');
-      await this.wait(600);
-      await this.emitStep(
-        'image-acquisition',
-        'completed',
-        `Image loaded successfully. Resolution: 1920x1080. Quality: Excellent.`
-      );
+      // STEP 1: Vision Analysis (AI does all extraction)
+      const visionStep: AgentStep = {
+        id: 'vision-analysis',
+        name: 'Vision Analysis',
+        description: 'Extracting all code date data using GPT-4 Vision',
+        status: 'running',
+        nodeType: 'reasoning',
+        timestamp: new Date(),
+        reasoning: 'Analyzing bag image with GPT-4 Vision...',
+      };
+      await this.emitStep(visionStep);
 
-      // Step 2: OCR Extraction
-      await this.emitStep('ocr-extraction', 'running', 'Analyzing image with vision AI to extract text...');
-      
-      await this.emitFunctionCall('extractCodeDate', { imageBase64: imageBase64.substring(0, 50) + '...' });
+      const visionPrompt = `Analyze this Frito-Lay product image. Extract ALL visible text and assess quality.
 
-      const ocrPrompt = `Analyze this product image from a Frito-Lay/PepsiCo factory floor.
+Code date format:
+- Line 1: Date (e.g., "22FEB2022")
+- Line 2: Day/Plant/Shift/Julian/Line (e.g., "1 92 1 319 13")
+- Line 3: Time (e.g., "13:08")
 
-CRITICAL: Look for these quality issues:
-1. Code date position relative to bellmark (the quality seal)
-2. Print quality (faded, smudged, unclear)
-3. Code date type (84-day vs 90-day shelf life)
-4. Price marking presence
+Quality checks:
+- Position: Is code date near bellmark (quality seal)? NOT on it?
+- Print quality: Clear and readable? Not faded?
 
-Extract ALL text visible on the packaging:
-- PMO number (production facility code, often 4-6 digits)
-- Date (various formats: MM/DD/YYYY, DDMMMYY, etc.)
-- Time stamp (HH:MM format)
-- Shelf life indicator (84 or 90 day)
-- Price marking (if visible)
-
-Also assess:
-- Is code date properly positioned near bellmark? (not too far, NOT on bellmark itself)
-- Is print quality acceptable? (clear, not faded)
-
-Return a JSON object:
+Return JSON:
 {
-  "fullText": "all text you can see",
-  "pmoNumber": "extracted PMO or null",
-  "date": "extracted date or null", 
-  "time": "extracted time or null",
-  "shelfLifeDays": 84 or 90 or null,
-  "hasPriceMarking": true/false,
-  "codeDatePosition": "correct" | "off_bellmark" | "on_bellmark",
+  "fullText": "all visible text",
+  "date": "date string or null",
+  "codeDateLine": "day/plant/shift/julian/line string or null",
+  "time": "time string or null",
+  "plantCode": "2-digit plant code or null",
+  "lineNumber": "line number or null",
+  "positioning": "correct" | "off_bellmark" | "on_bellmark",
   "printQuality": "good" | "faded" | "unreadable"
 }`;
 
-      const ocrResponse = await this.model.invoke([
+      const visionResponse = await this.model.invoke([
         {
           role: "user",
           content: [
-            { type: "text", text: ocrPrompt },
+            { type: "text", text: visionPrompt },
             {
               type: "image_url",
               image_url: { url: `data:image/jpeg;base64,${imageBase64}` },
@@ -143,147 +187,285 @@ Return a JSON object:
         },
       ]);
 
-      let extractedData: ExtractedData = {};
-      let parsed: any = {};
-      
+      let visionData: any = {};
       try {
-        parsed = JSON.parse(ocrResponse.content.toString());
-        extractedData = {
-          fullText: parsed.fullText,
-          pmoNumber: parsed.pmoNumber,
-          date: parsed.date,
-          time: parsed.time,
-        };
+        visionData = JSON.parse(visionResponse.content.toString());
       } catch {
-        extractedData = { fullText: "OCR extraction failed" };
-        parsed = { codeDatePosition: 'correct', printQuality: 'good' };
+        visionData = { 
+          fullText: "Vision extraction failed", 
+          positioning: 'correct', 
+          printQuality: 'good',
+          plantCode: '92',
+          lineNumber: '13'
+        };
       }
 
-      await this.emitFunctionCall('extractCodeDate', {}, extractedData);
+      visionStep.status = 'completed';
+      visionStep.reasoning = `Extracted: "${visionData.fullText}"`;
+      visionStep.extractedData = {
+        fullText: visionData.fullText,
+        pmoNumber: visionData.plantCode,
+        date: visionData.date,
+        time: visionData.time,
+      };
+      await this.emitStep(visionStep);
 
-      await this.emitStep(
-        'ocr-extraction',
-        'completed',
-        `Text extracted: "${extractedData.fullText}". Confidence: 92%`,
-        extractedData
-      );
+      // STEP 2: Validation (Deterministic rules checking)
+      const validationStep: AgentStep = {
+        id: 'validation',
+        name: 'Rules Validation',
+        description: 'Checking compliance with PepsiCo quality standards',
+        status: 'running',
+        nodeType: 'reasoning',
+        parentId: 'vision-analysis',
+        timestamp: new Date(),
+        reasoning: 'Validating against quality rules...',
+      };
+      await this.emitStep(validationStep);
 
-      // Step 3: Code Date Parsing
-      await this.emitStep('code-parsing', 'running', 'Parsing code date components...');
-      await this.emitFunctionCall('parseCodeDate', { rawText: extractedData.fullText });
-
-      await this.emitStep(
-        'code-parsing',
-        'completed',
-        `Parsed - PMO: ${extractedData.pmoNumber || 'MISSING'}, Date: ${extractedData.date || 'MISSING'}, Time: ${extractedData.time || 'MISSING'}`,
-        extractedData
-      );
-
-      // Step 4: Component Validation & Quality Checks
-      await this.emitStep('component-validation', 'running', 'Validating components and quality standards...');
-      
       const violations: ViolationType[] = [];
-      
-      // Check for missing components
-      if (!extractedData.pmoNumber) violations.push('missing_pmo');
-      if (!extractedData.date) violations.push('missing_date');
-      if (!extractedData.time) violations.push('missing_time');
+      let severity: 'minor' | 'moderate' | 'critical' = 'minor';
 
-      // Check positioning (CRITICAL - automatic hold if on bellmark)
-      if (parsed.codeDatePosition === 'on_bellmark') {
+      // Check missing components
+      if (!visionData.date) violations.push('missing_date');
+      if (!visionData.time) violations.push('missing_time');
+      if (!visionData.plantCode) violations.push('missing_pmo');
+
+      // Check positioning (CRITICAL)
+      if (visionData.positioning === 'on_bellmark') {
         violations.push('code_date_on_bellmark');
-      } else if (parsed.codeDatePosition === 'off_bellmark') {
+        severity = 'critical';
+      } else if (visionData.positioning === 'off_bellmark') {
         violations.push('code_date_off_bellmark');
+        severity = 'moderate';
       }
 
       // Check print quality
-      if (parsed.printQuality === 'faded' || parsed.printQuality === 'unreadable') {
+      if (visionData.printQuality === 'unreadable') {
         violations.push('faded_print');
+        severity = 'critical';
+      } else if (visionData.printQuality === 'faded') {
+        violations.push('faded_print');
+        if (severity === 'minor') severity = 'moderate';
       }
 
-      // Check shelf life type vs expected (if metadata provided)
-      if (metadata?.productType && parsed.shelfLifeDays) {
-        const expectedDays = metadata.productType.startsWith('84') ? 84 : 90;
-        if (parsed.shelfLifeDays !== expectedDays) {
-          violations.push('wrong_code_type');
+      const hasViolations = violations.length > 0;
+
+      validationStep.status = hasViolations ? 'error' : 'completed';
+      validationStep.reasoning = hasViolations
+        ? `Violations detected (${severity}): ${violations.join(', ')}`
+        : 'All quality standards met';
+      await this.emitStep(validationStep);
+
+      if (!hasViolations) {
+        // No violations - simple decision
+        const decision: FinalDecision = {
+          status: 'pass',
+          confidence: 0.95,
+          violations: ['none'],
+          reason: 'Product meets all PepsiCo quality standards. Continue production.',
+          extractedData: visionStep.extractedData,
+          agentReasoning: {
+            action: 'continue',
+            reasoning: 'No quality issues detected. Product is compliant.',
+            confidence: 0.95,
+            businessImpact: {
+              estimatedCost: 0,
+              riskLevel: 'low',
+              recommendation: 'Continue production - no action needed',
+            },
+          },
+        };
+
+        const decisionStep: AgentStep = {
+          id: 'agent-decision',
+          name: 'Agent Decision',
+          description: 'Autonomous action selection',
+          status: 'completed',
+          nodeType: 'decision',
+          parentId: 'validation',
+          timestamp: new Date(),
+          reasoning: decision.agentReasoning!.reasoning,
+        };
+        await this.emitStep(decisionStep);
+        this.callbacks.onDecision(decision);
+        return decision;
+      }
+
+      // VIOLATIONS DETECTED - Agent uses tools to make decision
+
+      // Tool 1: Calculate business impact
+      const impactStep: AgentStep = {
+        id: 'tool-calculate-impact',
+        name: 'Calculate Business Impact',
+        description: 'Assess cost of line stop vs QA alert',
+        status: 'running',
+        nodeType: 'tool',
+        parentId: 'validation',
+        timestamp: new Date(),
+        reasoning: 'Calculating business impact of different actions...',
+      };
+      await this.emitStep(impactStep);
+
+      // Calculate multiple options
+      const stopImpact = await calculateBusinessImpactTool.invoke({
+        action: 'stop_line',
+        violationSeverity: severity,
+        plantCode: visionData.plantCode || '92',
+      });
+
+      const alertImpact = await calculateBusinessImpactTool.invoke({
+        action: 'alert_qa',
+        violationSeverity: severity,
+        plantCode: visionData.plantCode || '92',
+      });
+
+      impactStep.status = 'completed';
+      impactStep.toolResult = { stopImpact, alertImpact };
+      impactStep.reasoning = `Stop: $${stopImpact.estimatedCost} (${stopImpact.riskLevel}), Alert: $${alertImpact.estimatedCost} (${alertImpact.riskLevel})`;
+      await this.emitStep(impactStep);
+
+      // Tool 2: Query historical incidents
+      const historyStep: AgentStep = {
+        id: 'tool-query-history',
+        name: 'Query Historical Incidents',
+        description: 'Check past violations for this line',
+        status: 'running',
+        nodeType: 'tool',
+        parentId: 'validation',
+        timestamp: new Date(),
+        reasoning: 'Querying incident history...',
+      };
+      await this.emitStep(historyStep);
+
+      const historyData = await queryHistoricalIncidentsTool.invoke({
+        plantCode: visionData.plantCode || '92',
+        lineNumber: visionData.lineNumber || '13',
+        daysBack: 30,
+      });
+
+      historyStep.status = 'completed';
+      historyStep.toolResult = historyData;
+      historyStep.reasoning = `${historyData.totalIncidents} incidents in 30 days. ${historyData.pattern}`;
+      await this.emitStep(historyStep);
+
+      // Tool 3: Log violation
+      const logStep: AgentStep = {
+        id: 'tool-log-violation',
+        name: 'Log Violation',
+        description: 'Record violation in quality database',
+        status: 'running',
+        nodeType: 'tool',
+        parentId: 'validation',
+        timestamp: new Date(),
+        reasoning: 'Logging violation to database...',
+      };
+      await this.emitStep(logStep);
+
+      const logResult = await logViolationTool.invoke({
+        violationType: violations[0],
+        plantCode: visionData.plantCode || '92',
+        lineNumber: visionData.lineNumber || '13',
+        severity,
+        imageId: `BAG-${bagNumber}`,
+      });
+
+      logStep.status = 'completed';
+      logStep.toolResult = logResult;
+      logStep.reasoning = logResult.message;
+      await this.emitStep(logStep);
+
+      // STEP 3: Agent makes autonomous decision
+      const decisionStep: AgentStep = {
+        id: 'agent-decision',
+        name: 'Agent Decision',
+        description: 'Autonomous action selection based on context',
+        status: 'running',
+        nodeType: 'decision',
+        parentId: 'validation',
+        timestamp: new Date(),
+        reasoning: 'Agent reasoning about optimal action...',
+      };
+      await this.emitStep(decisionStep);
+
+      // Let the LLM decide the action based on all context
+      const decisionPrompt = `You are a production line quality control AI agent. Based on the following context, decide what action to take:
+
+VIOLATIONS DETECTED:
+${violations.map(v => `- ${v.replace(/_/g, ' ')}`).join('\n')}
+Severity: ${severity}
+
+BUSINESS IMPACT ANALYSIS:
+- Stop Line: $${stopImpact.estimatedCost}/hr, Risk: ${stopImpact.riskLevel}
+  ${stopImpact.recommendation}
+- Alert QA: $${alertImpact.estimatedCost}, Risk: ${alertImpact.riskLevel}
+  ${alertImpact.recommendation}
+
+HISTORICAL CONTEXT:
+${historyData.pattern}
+${historyData.recommendation}
+Recent critical incidents: ${historyData.recentCritical}
+
+DECISION RULES:
+- CRITICAL severity (on bellmark, unreadable) → Usually stop_line
+- MODERATE severity with recurring pattern → Consider stop_line
+- MODERATE severity, first occurrence → Usually alert_qa
+- MINOR severity → alert_qa
+
+Choose ONE action: continue, alert_qa, stop_line, or hold_batch
+
+Respond with JSON:
+{
+  "action": "your_chosen_action",
+  "reasoning": "detailed explanation of why you chose this action based on severity, cost, risk, and historical patterns",
+  "confidence": 0.XX
+}`;
+
+      const decisionResponse = await this.model.invoke([
+        { role: "user", content: decisionPrompt }
+      ]);
+
+      let agentDecision: any = { action: 'alert_qa', reasoning: 'Default to QA alert', confidence: 0.7 };
+      try {
+        agentDecision = JSON.parse(decisionResponse.content.toString());
+      } catch {
+        // Fallback logic
+        if (severity === 'critical') {
+          agentDecision = { action: 'stop_line', reasoning: 'Critical violation requires line stop', confidence: 0.9 };
+        } else if (severity === 'moderate' && historyData.recentCritical > 0) {
+          agentDecision = { action: 'stop_line', reasoning: 'Recurring issues require proactive stop', confidence: 0.85 };
         }
       }
 
-      // Check price marking vs expected (if metadata provided)
-      if (metadata?.productType) {
-        const shouldHavePrice = metadata.productType.includes('_price');
-        if (shouldHavePrice !== parsed.hasPriceMarking) {
-          violations.push('wrong_price_marking');
-        }
-      }
+      const chosenImpact = agentDecision.action === 'stop_line' ? stopImpact : alertImpact;
 
-      const hasAllComponents = !violations.some(v => 
-        ['missing_pmo', 'missing_date', 'missing_time'].includes(v)
-      );
-
-      const criticalViolations = violations.filter(v => 
-        ['code_date_on_bellmark', 'faded_print'].includes(v)
-      );
-
-      await this.emitStep(
-        'component-validation',
-        violations.length === 0 ? 'completed' : (criticalViolations.length > 0 ? 'error' : 'error'),
-        violations.length === 0
-          ? 'All quality standards met: Components ✓, Position ✓, Print Quality ✓'
-          : `Violations detected: ${violations.map(v => v.replace(/_/g, ' ')).join(', ')}`
-      );
-
-      // Step 5: Date Logic Validation
-      if (extractedData.date && hasAllComponents) {
-        await this.emitStep('date-logic', 'running', 'Validating date logic and freshness...');
-        await this.emitFunctionCall('validateDate', {
-          date: extractedData.date,
-          pmoNumber: extractedData.pmoNumber,
-          time: extractedData.time,
-        });
-
-        const currentDate = new Date();
-        const codeDate = new Date(extractedData.date);
-        
-        if (isNaN(codeDate.getTime())) {
-          violations.push('invalid_format');
-          await this.emitStep('date-logic', 'error', 'Invalid date format detected');
-        } else if (codeDate > currentDate) {
-          violations.push('future_date');
-          await this.emitStep('date-logic', 'error', 'Future date detected - possible tampering');
-        } else if (codeDate < currentDate) {
-          const daysDiff = Math.ceil((currentDate.getTime() - codeDate.getTime()) / (1000 * 60 * 60 * 24));
-          if (daysDiff > 90) {
-            violations.push('expired');
-            await this.emitStep('date-logic', 'error', `Product expired ${daysDiff} days ago`);
-          } else {
-            await this.emitStep('date-logic', 'completed', `Product fresh. ${90 - daysDiff} days until expiration.`);
-          }
-        }
-      } else {
-        await this.emitStep('date-logic', 'error', 'Cannot validate date - missing components');
-      }
-
-      // Step 6: Final Decision
-      await this.emitStep('final-decision', 'running', 'Generating final compliance decision...');
-
-      const isPass = violations.length === 0 || (violations.length === 1 && violations[0] === 'none');
-      const confidence = hasAllComponents ? 0.94 : 0.78;
-
-      const decision: FinalDecision = {
-        status: isPass ? 'pass' : 'fail',
-        confidence,
-        violations: violations.length > 0 ? violations : ['none'],
-        reason: isPass
-          ? 'Product meets all PepsiCo quality standards. Code date valid and within freshness window.'
-          : `Quality violation detected: ${violations.join(', ')}. Product must be removed from line.`,
-        extractedData,
+      const agentReasoning: AgentReasoning = {
+        action: agentDecision.action,
+        reasoning: agentDecision.reasoning,
+        confidence: agentDecision.confidence,
+        businessImpact: {
+          estimatedCost: chosenImpact.estimatedCost,
+          riskLevel: chosenImpact.riskLevel,
+          recommendation: chosenImpact.recommendation,
+        },
+        historicalContext: historyData.pattern,
       };
 
-      await this.emitStep('final-decision', 'completed', decision.reason);
-      this.callbacks.onDecision(decision);
+      decisionStep.status = 'completed';
+      decisionStep.reasoning = `Action: ${agentDecision.action.toUpperCase()} - ${agentDecision.reasoning}`;
+      await this.emitStep(decisionStep);
 
-      return decision;
+      const finalDecision: FinalDecision = {
+        status: 'fail',
+        confidence: agentDecision.confidence,
+        violations,
+        reason: `${severity.toUpperCase()} VIOLATION: ${violations.join(', ')}. Agent chose: ${agentDecision.action.replace('_', ' ').toUpperCase()}`,
+        extractedData: visionStep.extractedData,
+        agentReasoning,
+      };
+
+      this.callbacks.onDecision(finalDecision);
+      return finalDecision;
 
     } catch (error) {
       console.error('Agent error:', error);

@@ -9,6 +9,7 @@ export async function POST(request: NextRequest) {
   
   try {
     const { scenario, imageBase64, metadata } = await request.json();
+    const bagNumber = metadata?.bagNumber || 1;
 
     const stream = new ReadableStream({
       async start(controller) {
@@ -19,17 +20,8 @@ export async function POST(request: NextRequest) {
                 type: 'step',
                 step: {
                   ...step,
-                  timestamp: new Date(step.timestamp), // Ensure Date serialization
+                  timestamp: new Date(step.timestamp),
                 },
-              };
-              controller.enqueue(
-                encoder.encode(`data: ${JSON.stringify(message)}\n\n`)
-              );
-            },
-            onFunctionCall: (functionCall) => {
-              const message: StreamMessage = {
-                type: 'function_call',
-                functionCall,
               };
               controller.enqueue(
                 encoder.encode(`data: ${JSON.stringify(message)}\n\n`)
@@ -46,8 +38,8 @@ export async function POST(request: NextRequest) {
             },
           });
 
-          // Run the agent analysis with metadata
-          await agent.analyzeImage(imageBase64, metadata);
+          // Run the agent analysis
+          await agent.analyzeImage(imageBase64, bagNumber);
 
           controller.close();
         } catch (error) {

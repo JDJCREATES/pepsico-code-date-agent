@@ -136,11 +136,12 @@ export default function Home() {
   return (
     <div className="flex min-h-screen bg-zinc-50 font-sans dark:bg-black">
       <main className="flex min-h-screen w-full max-w-[1800px] mx-auto gap-6 p-4 md:p-8 flex-col md:flex-row">
-        {/* Left side - Camera Feed (larger) */}
-        <section className="flex-1 md:flex-2 flex flex-col min-h-[60vh] md:min-h-0">
-          <div className="mb-4 md:mb-6 hidden md:block">
+        {/* Left side - Camera Feed, Controls, Decision */}
+        <section className="flex-1 md:flex-2 flex flex-col gap-4">
+          {/* Title */}
+          <div className="hidden md:block">
             <div className="flex items-center gap-3 mb-2">
-              <GiChipsBag className="text-4xl md:text-5xl text-blue-600 dark:text-blue-400" />
+              <GiChipsBag size={48} className="text-blue-600 dark:text-blue-400" />
               <h1 className="text-2xl md:text-4xl font-bold text-zinc-900 dark:text-white">
                 PepsiCo Code Date Quality Control Agent
               </h1>
@@ -156,20 +157,13 @@ export default function Home() {
             <AgentBoard steps={agentSteps} />
           </div>
           
+          {/* Camera Feed */}
           <div className="flex-1">
             <CameraFeed currentImage={currentImage} bagCounter={bagCounter} />
           </div>
-        </section>
 
-        {/* Right side - Agent Board, Final Decision, Controls (Desktop only) */}
-        <section className="hidden md:flex flex-1 flex-col gap-4">
-          <div className="flex-1 overflow-auto">
-            <AgentBoard steps={agentSteps} />
-          </div>
-          <div className="w-full">
-            <FinalDecision decision={finalDecision} />
-          </div>
-          <div className="w-full">
+          {/* Controls and Decision side by side on desktop */}
+          <div className="hidden md:grid md:grid-cols-2 gap-4">
             <DemoControls
               isRunning={isRunning}
               onStart={() => startDemo('default')}
@@ -181,6 +175,14 @@ export default function Home() {
                 setIsRunning(false);
               }}
             />
+            <FinalDecision decision={finalDecision} />
+          </div>
+        </section>
+
+        {/* Right side - Agent Board (Full Height) */}
+        <section className="hidden md:flex flex-1 flex-col">
+          <div className="flex-1 overflow-hidden">
+            <AgentBoard steps={agentSteps} />
           </div>
         </section>
 
@@ -204,7 +206,7 @@ export default function Home() {
           </div>
           <div className="mt-4 pb-4">
             <div className="flex items-center gap-2 mb-2">
-              <GiChipsBag className="text-2xl text-blue-600 dark:text-blue-400" />
+              <GiChipsBag size={32} className="text-blue-600 dark:text-blue-400" />
               <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">
                 PepsiCo Code Date Quality Control Agent
               </h1>
