@@ -25,6 +25,7 @@ export default function Home() {
   const [delayBetweenImages, setDelayBetweenImages] = useState(2000);
   const [pauseOnEach, setPauseOnEach] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [incidents, setIncidents] = useState(getIncidents());
   const abortControllerRef = useRef<AbortController | null>(null);
   const pauseResolverRef = useRef<(() => void) | null>(null);
 
@@ -43,6 +44,19 @@ export default function Home() {
     };
     generate();
   }, []);
+
+  // Poll for incident updates
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const currentIncidents = getIncidents();
+      if (currentIncidents.length !== incidents.length) {
+        console.log('[PAGE] Syncing incidents:', currentIncidents.length);
+        setIncidents(currentIncidents);
+      }
+    }, 500); // Check every 500ms
+
+    return () => clearInterval(interval);
+  }, [incidents.length]);
 
   const startDemo = async (scenario: string) => {
     if (generatedImages.length === 0) {
@@ -125,6 +139,33 @@ export default function Home() {
                   setBagCounter(prev => prev + 1);
                 }
 
+                if ((message as any).type === 'incident' && (message as any).incident) {
+                  // Save incident on client side
+                  const incident = (message as any).incident;
+                  const savedIncident = {
+                    id: `INC-${Date.now()}`,
+                    timestamp: new Date().toISOString(),
+                    bagNumber: incident.bagNumber,
+                    violationType: incident.violations,
+                    severity: incident.severity,
+                    action: incident.action,
+                    estimatedCost: incident.estimatedCost,
+                    riskLevel: incident.riskLevel,
+                    recommendation: incident.recommendation,
+                    reasoning: incident.reasoning,
+                    confidence: incident.confidence,
+                    extractedData: incident.extractedData,
+                  };
+                  
+                  // Import and use saveIncident dynamically
+                  import('@/app/lib/incidentStorage').then(({ saveIncident }) => {
+                    saveIncident(savedIncident);
+                    console.log('[PAGE] Saved incident from stream:', savedIncident.id);
+                    // Force immediate update
+                    setIncidents(prev => [...prev, savedIncident]);
+                  });
+                }
+
                 if (message.type === 'error') {
                   console.error('Stream error:', message.error);
                 }
@@ -195,25 +236,6 @@ export default function Home() {
               An AI agent that analyzes security camera footage to identify code
               date violations in real-time.
             </p>
-            <div className="flex items-center gap-4 mt-4">
-              {isGenerating && (
-                <p className="text-xs text-blue-600 dark:text-blue-400">
-                  🥔 Generating 50 test images...
-                </p>
-              )}
-              {!isGenerating && generatedImages.length > 0 && (
-                <p className="text-xs text-green-600 dark:text-green-400">
-                  ✓ {generatedImages.length} test images ready
-                </p>
-              )}
-              <button
-                onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-                className="flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-colors"
-              >
-                <MdHistory size={16} />
-                History ({getIncidents().length})
-              </button>
-            </div>
           </div>
           
           {/* Mobile agent steps above camera */}
@@ -223,7 +245,12 @@ export default function Home() {
           
           {/* Camera Feed */}
           <div className="flex-1">
-            <CameraFeed currentImage={currentImage} bagCounter={bagCounter} />
+            <CameraFeed 
+              currentImage={currentImage} 
+              bagCounter={bagCounter}
+              onHistoryClick={() => setIsSidebarOpen(!isSidebarOpen)}
+              historyCount={incidents.length}
+            />
           </div>
 
           {/* Controls and Decision side by side on desktop */}
@@ -293,20 +320,13 @@ export default function Home() {
               An AI agent that analyzes security camera footage to identify code
               date violations in real-time.
             </p>
-            <button
-              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-              className="mt-4 flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-colors"
-            >
-              <MdHistory size={16} />
-              History ({getIncidents().length})
-            </button>
           </div>
         </section>
       </main>
 
       {/* Incident History Sidebar */}
       <IncidentHistorySidebar
-        incidents={getIncidents()}
+        incidents={incidents}
         isOpen={isSidebarOpen}
         onClose={() => setIsSidebarOpen(false)}
       />

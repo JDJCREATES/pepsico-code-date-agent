@@ -3,7 +3,7 @@ import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { AgentStep, FinalDecision, ViolationType, ExtractedData, AgentAction, AgentReasoning } from "../types/agent";
 import { AGENT_STEPS, StepId, BUSINESS_DATA } from "./agentSteps";
-import { saveIncident, getIncidentsByDateRange, getIncidents, SavedIncident } from "./incidentStorage";
+import { getIncidentsByDateRange } from "./incidentStorage";
 
 // LangChain tools for business decision-making
 const calculateBusinessImpactTool = tool(
@@ -462,15 +462,32 @@ Respond with JSON:
         { role: "user", content: decisionPrompt }
       ]);
 
+      console.log('[AGENT] Decision response:', decisionResponse.content.toString());
+
       let agentDecision: any = { action: 'alert_qa', reasoning: 'Default to QA alert', confidence: 0.7 };
       try {
-        agentDecision = JSON.parse(decisionResponse.content.toString());
-      } catch {
-        // Fallback logic
+        const responseText = decisionResponse.content.toString();
+        // Try to extract JSON from markdown code blocks
+        const jsonMatch = responseText.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/) || 
+                         responseText.match(/(\{[\s\S]*\})/);
+        
+        if (jsonMatch) {
+          agentDecision = JSON.parse(jsonMatch[1]);
+          console.log('[AGENT] Parsed decision:', agentDecision);
+        } else {
+          throw new Error('No JSON found in response');
+        }
+      } catch (error) {
+        console.error('[AGENT] Failed to parse decision, using fallback:', error);
+        // Fallback logic based on severity
         if (severity === 'critical') {
-          agentDecision = { action: 'stop_line', reasoning: 'Critical violation requires line stop', confidence: 0.9 };
+          agentDecision = { action: 'stop_line', reasoning: 'Critical violation requires immediate line stop to prevent non-compliant product from reaching consumers', confidence: 0.9 };
         } else if (severity === 'moderate' && historyData.recentCritical > 0) {
-          agentDecision = { action: 'stop_line', reasoning: 'Recurring issues require proactive stop', confidence: 0.85 };
+          agentDecision = { action: 'stop_line', reasoning: 'Recurring moderate issues combined with past critical violations indicate systemic problem requiring immediate intervention', confidence: 0.85 };
+        } else if (severity === 'moderate') {
+          agentDecision = { action: 'alert_qa', reasoning: 'Moderate violation warrants QA inspection but does not require full line stop at this time', confidence: 0.8 };
+        } else {
+          agentDecision = { action: 'alert_qa', reasoning: 'Minor quality issue identified - QA team notified for follow-up inspection', confidence: 0.75 };
         }
       }
 
@@ -501,24 +518,8 @@ Respond with JSON:
         agentReasoning,
       };
 
-      // Save incident to storage
-      const savedIncident: SavedIncident = {
-        id: `INC-${Date.now()}`,
-        timestamp: new Date().toISOString(),
-        bagNumber,
-        violationType: violations,
-        severity,
-        action: agentDecision.action,
-        estimatedCost: chosenImpact.estimatedCost,
-        riskLevel: chosenImpact.riskLevel as 'low' | 'medium' | 'high',
-        recommendation: chosenImpact.recommendation,
-        reasoning: agentDecision.reasoning,
-        confidence: agentDecision.confidence,
-        extractedData: visionStep.extractedData,
-      };
-      console.log('[AGENT] Saving incident:', savedIncident.id, 'Bag:', bagNumber, 'Severity:', severity);
-      saveIncident(savedIncident);
-      console.log('[AGENT] Incident saved. Total incidents:', getIncidents().length);
+      // Note: Incident saving happens on client side via stream message
+      console.log('[AGENT] Decision complete. Bag:', bagNumber, 'Severity:', severity, 'Action:', agentDecision.action);
 
       this.callbacks.onDecision(finalDecision);
       return finalDecision;

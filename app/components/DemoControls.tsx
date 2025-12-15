@@ -47,12 +47,44 @@ export default function DemoControls({
 
   return (
     <div className="w-full rounded-b-sm border border-zinc-200 dark:border-zinc-800 p-4">
-      <h2 className="mb-4 text-lg font-semibold text-zinc-900 dark:text-white">
-        Controls
-      </h2>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">
+          Controls
+        </h2>
+        
+        {/* Compact Timing Controls */}
+        <div className="flex items-center gap-3 text-xs">
+          <div className="flex items-center gap-1">
+            <input
+              type="checkbox"
+              id="pauseOnEach"
+              checked={pauseOnEach}
+              onChange={(e) => onPauseOnEachChange?.(e.target.checked)}
+              className="w-3 h-3 text-cyan-600 bg-zinc-100 border-zinc-300 rounded"
+            />
+            <label htmlFor="pauseOnEach" className="text-zinc-700 dark:text-zinc-300 whitespace-nowrap">
+              Pause
+            </label>
+          </div>
+          <div className="flex items-center gap-1">
+            <label className="text-zinc-700 dark:text-zinc-300 whitespace-nowrap">
+              {delayBetweenImages / 1000}s
+            </label>
+            <input
+              type="range"
+              min="0"
+              max="5000"
+              step="500"
+              value={delayBetweenImages}
+              onChange={(e) => onDelayChange?.(Number(e.target.value))}
+              className="w-20 h-1 bg-zinc-200 rounded-lg appearance-none cursor-pointer dark:bg-zinc-700"
+            />
+          </div>
+        </div>
+      </div>
       
       {/* Main Controls */}
-      <div className="flex gap-2 mb-4">
+      <div className="flex gap-2">
         <button
           onClick={handleStart}
           disabled={isRunning || disabled}
@@ -80,44 +112,6 @@ export default function DemoControls({
         >
           Reset
         </button>
-      </div>
-
-      {/* Settings */}
-      <div className="space-y-3 border-t border-zinc-200 dark:border-zinc-800 pt-3">
-        {/* Delay Control */}
-        <div>
-          <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
-            Delay Between Images: {delayBetweenImages / 1000}s
-          </label>
-          <input
-            type="range"
-            min="0"
-            max="5000"
-            step="500"
-            value={delayBetweenImages}
-            onChange={(e) => onDelayChange?.(Number(e.target.value))}
-            className="w-full h-2 bg-zinc-200 rounded-lg appearance-none cursor-pointer dark:bg-zinc-700"
-          />
-          <div className="flex justify-between text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-            <span>0s</span>
-            <span>2.5s</span>
-            <span>5s</span>
-          </div>
-        </div>
-
-        {/* Pause on Each */}
-        <div className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            id="pauseOnEach"
-            checked={pauseOnEach}
-            onChange={(e) => onPauseOnEachChange?.(e.target.checked)}
-            className="w-4 h-4 text-cyan-600 bg-zinc-100 border-zinc-300 rounded focus:ring-cyan-500 dark:bg-zinc-700 dark:border-zinc-600"
-          />
-          <label htmlFor="pauseOnEach" className="text-sm text-zinc-700 dark:text-zinc-300">
-            Pause after each image (manual advance)
-          </label>
-        </div>
       </div>
     </div>
   );
