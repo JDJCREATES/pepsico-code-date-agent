@@ -64,7 +64,8 @@ export function generateRandomCodeDate(): CodeDateConfig {
 // Generate code date image overlay
 export async function generateCodeDateOverlay(
   baseImagePath: string,
-  config: CodeDateConfig
+  config: CodeDateConfig,
+  cameraVariation?: { vertical: number; horizontal: number }
 ): Promise<GeneratedImage> {
   return new Promise((resolve, reject) => {
     const canvas = document.createElement('canvas');
@@ -86,20 +87,35 @@ export async function generateCodeDateOverlay(
       // Draw base image
       ctx.drawImage(img, 0, 0);
       
+      // Apply camera variation (simulates slight camera movement/vibration)
+      const cameraShiftX = cameraVariation?.horizontal || 0;
+      const cameraShiftY = cameraVariation?.vertical || 0;
+      
       // Calculate position based on config
       // Bellmark is the quality seal at top
       // Code date should be BELOW "GUARANTEED FRESH UNTIL PRINTED DATE" text
-      let x = canvas.width * 0.62; // Center-right of bag
-      let y = canvas.height * 0.55; // Much lower, in middle-lower area
+      let x = canvas.width * (0.62 + cameraShiftX); // Center-right of bag
+      let y = canvas.height * (0.55 + cameraShiftY); // Much lower, in middle-lower area
+      
+      // Add subtle random variation to code date position (±1-2% for good bags)
+      const codeDateVariationX = config.position === 'correct' 
+        ? (Math.random() - 0.5) * 0.02 // ±1% horizontal for good bags
+        : 0;
+      const codeDateVariationY = config.position === 'correct'
+        ? (Math.random() - 0.5) * 0.02 // ±1% vertical for good bags  
+        : 0;
+      
+      x += canvas.width * codeDateVariationX;
+      y += canvas.height * codeDateVariationY;
       
       if (config.position === 'on_bellmark') {
         // Code date overlaps the bellmark (CRITICAL violation)
-        x = canvas.width * 0.58;
-        y = canvas.height * 0.35;
+        x = canvas.width * (0.58 + cameraShiftX);
+        y = canvas.height * (0.35 + cameraShiftY);
       } else if (config.position === 'off_bellmark') {
         // Too far from bellmark (moderate violation)
-        x = canvas.width * 0.75;
-        y = canvas.height * 0.65;
+        x = canvas.width * (0.75 + cameraShiftX);
+        y = canvas.height * (0.65 + cameraShiftY);
       }
       
       // Apply quality effects
@@ -191,9 +207,15 @@ export async function generateImageBatch(count: number = 10): Promise<GeneratedI
   // Use miscalibrated images sparingly - only 1-2 times each in the batch
   const leftIndexes = new Set([Math.floor(Math.random() * count)]);
   const rightIndexes = new Set([Math.floor(Math.random() * count)]);
+  // Add vertical miscalibration (camera too high/low) - 1-2 times
+  const verticalHighIndexes = new Set([Math.floor(Math.random() * count)]);
+  const verticalLowIndexes = new Set([Math.floor(Math.random() * count)]);
+  
   // Possibly add a second occurrence for each
   if (Math.random() > 0.5) leftIndexes.add(Math.floor(Math.random() * count));
   if (Math.random() > 0.5) rightIndexes.add(Math.floor(Math.random() * count));
+  if (Math.random() > 0.5) verticalHighIndexes.add(Math.floor(Math.random() * count));
+  if (Math.random() > 0.5) verticalLowIndexes.add(Math.floor(Math.random() * count));
   
   const results: GeneratedImage[] = [];
   
@@ -202,17 +224,39 @@ export async function generateImageBatch(count: number = 10): Promise<GeneratedI
     
     // Select base image - mostly normal, with occasional miscalibration
     let baseImage = baseImages.normal;
-    if (leftIndexes.has(i)) baseImage = baseImages.left;
-    else if (rightIndexes.has(i)) baseImage = baseImages.right;
+    let cameraVariation = { vertical: 0, horizontal: 0 };
+    
+    // Horizontal miscalibration (left/right images)
+    if (leftIndexes.has(i)) {
+      baseImage = baseImages.left;
+      cameraVariation.horizontal = -0.08; // Shifted left
+    } else if (rightIndexes.has(i)) {
+      baseImage = baseImages.right;
+      cameraVariation.horizontal = 0.08; // Shifted right
+    }
+    
+    // Vertical miscalibration (camera too high/low)
+    if (verticalHighIndexes.has(i)) {
+      cameraVariation.vertical = -0.06; // Camera too high, code date appears lower
+    } else if (verticalLowIndexes.has(i)) {
+      cameraVariation.vertical = 0.06; // Camera too low, code date appears higher
+    }
+    
+    // Add subtle variation to all images (realistic vibration/movement)
+    if (cameraVariation.horizontal === 0 && cameraVariation.vertical === 0) {
+      cameraVariation.horizontal = (Math.random() - 0.5) * 0.02; // ±1% horizontal
+      cameraVariation.vertical = (Math.random() - 0.5) * 0.02; // ±1% vertical
+    }
     
     console.log(`[IMG-GEN] Generating image ${i + 1}/${count}:`, {
       baseImage,
       position: config.position,
       quality: config.quality,
+      cameraVariation,
     });
     
     try {
-      const generated = await generateCodeDateOverlay(baseImage, config);
+      const generated = await generateCodeDateOverlay(baseImage, config, cameraVariation);
       results.push(generated);
       console.log(`[IMG-GEN] ✓ Image ${i + 1} generated successfully`);
     } catch (error) {

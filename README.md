@@ -4,8 +4,10 @@
 > AI-powered production line monitoring using multi-agent architecture via Langchain framework
 
 ## Live Demo
-> Input data is simulated - agentic AI is powered via Openai API
-> PepsiCo would need to integrate either on premises LLM or use enterprise solutions such as azure.
+> Input data is simulated 
+> Agentic AI is powered with Openai API via Langchain
+> PepsiCo would need to integrate either on premises LLM or use enterprise solutions such as azure
+> A custom vision agent could be trained for offline use given a large enough dataset
 
 ## The Problem
 
