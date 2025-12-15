@@ -3,6 +3,7 @@ import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { AgentStep, FinalDecision, ViolationType, ExtractedData, AgentAction, AgentReasoning } from "../types/agent";
 import { AGENT_STEPS, StepId, BUSINESS_DATA } from "./agentSteps";
+import { saveIncident, getIncidentsByDateRange, getIncidents, SavedIncident } from "./incidentStorage";
 
 // LangChain tools for business decision-making
 const calculateBusinessImpactTool = tool(
@@ -52,22 +53,39 @@ const calculateBusinessImpactTool = tool(
 
 const queryHistoricalIncidentsTool = tool(
   async ({ plantCode, lineNumber, daysBack }: { plantCode: string, lineNumber: string, daysBack: number }) => {
-    const incidents = [
-      { date: '2024-12-01', type: 'faded_print', action: 'alert_qa', resolved: true },
-      { date: '2024-11-15', type: 'code_date_off_bellmark', action: 'alert_qa', resolved: true },
-      { date: '2024-10-28', type: 'code_date_on_bellmark', action: 'stop_line', resolved: true },
-    ];
-
-    const recentCritical = incidents.filter(i => i.type === 'code_date_on_bellmark').length;
+    // Query real saved incidents
+    const incidents = getIncidentsByDateRange(daysBack);
+    const criticalIncidents = incidents.filter(i => i.severity === 'critical');
+    const recentCritical = criticalIncidents.length;
     const totalIncidents = incidents.length;
+
+    let pattern = 'No significant pattern detected';
+    if (recentCritical > 2) {
+      pattern = 'Recurring critical violations - requires immediate attention';
+    } else if (recentCritical > 0) {
+      pattern = 'Occasional critical issues detected';
+    } else if (totalIncidents > 5) {
+      pattern = 'Multiple minor violations - monitor closely';
+    }
+
+    const lastCritical = criticalIncidents.length > 0 
+      ? criticalIncidents[criticalIncidents.length - 1]
+      : null;
 
     return {
       totalIncidents,
       recentCritical,
-      pattern: recentCritical > 0 ? 'Recurring critical positioning issues' : 'Minor quality issues, no critical pattern',
-      lastCriticalDate: recentCritical > 0 ? '2024-10-28' : 'None',
-      recommendation: recentCritical > 1 ? 'Line needs maintenance - recommend proactive stop' : 'Standard monitoring adequate',
-      incidents: incidents.slice(0, 3),
+      pattern,
+      lastCriticalDate: lastCritical ? lastCritical.timestamp : 'None',
+      recommendation: recentCritical > 1 
+        ? 'Multiple critical violations - recommend line maintenance check'
+        : 'Continue standard monitoring',
+      incidents: incidents.slice(-5).map(i => ({
+        date: i.timestamp,
+        type: i.violationType.join(', '),
+        action: i.action,
+        severity: i.severity,
+      })),
     };
   },
   {
@@ -82,11 +100,15 @@ const queryHistoricalIncidentsTool = tool(
 );
 
 const logViolationTool = tool(
-  async ({ violationType, plantCode, lineNumber, severity, imageId }: { 
-    violationType: string, plantCode: string, lineNumber: string, severity: string, imageId: string 
+  async ({ violationType, plantCode, lineNumber, severity, imageId, action, estimatedCost, reasoning }: { 
+    violationType: string, plantCode: string, lineNumber: string, severity: string, imageId: string,
+    action: string, estimatedCost: number, reasoning: string
   }) => {
     const logId = `LOG-${Date.now()}`;
     const timestamp = new Date().toISOString();
+
+    // Note: We'll save the full incident after the decision is made
+    // This just returns success for the tool call
 
     return {
       success: true,
@@ -105,6 +127,9 @@ const logViolationTool = tool(
       lineNumber: z.string(),
       severity: z.string(),
       imageId: z.string(),
+      action: z.string(),
+      estimatedCost: z.number(),
+      reasoning: z.string(),
     }),
   }
 );
@@ -155,8 +180,8 @@ export class CodeDateAgent {
 
 Code date format:
 - Line 1: Date (e.g., "22FEB2022")
-- Line 2: Day/Plant/Shift/Julian/Line (e.g., "1 92 1 319 13")
-- Line 3: Time (e.g., "13:08")
+- Line 2: Day/Plant/Shift/Julian/Line - all concatenated (e.g., "137133193")
+- Line 3: PMO number and Time (e.g., "37 13:08")
 
 Quality checks:
 - Position: Is code date near bellmark (quality seal)? NOT on it?
@@ -174,6 +199,7 @@ Return JSON:
   "printQuality": "good" | "faded" | "unreadable"
 }`;
 
+      console.log('[AGENT] Sending vision request...');
       const visionResponse = await this.model.invoke([
         {
           role: "user",
@@ -187,21 +213,29 @@ Return JSON:
         },
       ]);
 
+      console.log('[AGENT] Vision response:', visionResponse.content.toString());
+
       let visionData: any = {};
+      const responseText = visionResponse.content.toString();
       try {
-        visionData = JSON.parse(visionResponse.content.toString());
-      } catch {
-        visionData = { 
-          fullText: "Vision extraction failed", 
-          positioning: 'correct', 
-          printQuality: 'good',
-          plantCode: '92',
-          lineNumber: '13'
-        };
+        // Try to extract JSON if wrapped in markdown code blocks
+        const jsonMatch = responseText.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/) || 
+                         responseText.match(/(\{[\s\S]*?\})/);
+        const jsonStr = jsonMatch ? jsonMatch[1] : responseText;
+        visionData = JSON.parse(jsonStr);
+        console.log('[AGENT] Parsed vision data:', visionData);
+      } catch (error) {
+        console.error('[AGENT] JSON parse failed:', error);
+        console.error('[AGENT] Raw response:', responseText);
+        visionStep.status = 'error';
+        visionStep.reasoning = 'Vision extraction failed - invalid JSON response';
+        await this.emitStep(visionStep);
+        
+        throw new Error(`Vision extraction failed: ${error}`);
       }
 
       visionStep.status = 'completed';
-      visionStep.reasoning = `Extracted: "${visionData.fullText}"`;
+      visionStep.reasoning = `Extracted: "${visionData.fullText?.substring(0, 100) || 'No text'}"`;
       visionStep.extractedData = {
         fullText: visionData.fullText,
         pmoNumber: visionData.plantCode,
@@ -364,10 +398,13 @@ Return JSON:
 
       const logResult = await logViolationTool.invoke({
         violationType: violations[0],
-        plantCode: visionData.plantCode || '92',
-        lineNumber: visionData.lineNumber || '13',
+        plantCode: visionData.plantCode || '37',
+        lineNumber: visionData.lineNumber || '3',
         severity,
         imageId: `BAG-${bagNumber}`,
+        action: 'pending', // Will be determined after agent decision
+        estimatedCost: 0,
+        reasoning: 'Initial log entry',
       });
 
       logStep.status = 'completed';
@@ -463,6 +500,25 @@ Respond with JSON:
         extractedData: visionStep.extractedData,
         agentReasoning,
       };
+
+      // Save incident to storage
+      const savedIncident: SavedIncident = {
+        id: `INC-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        bagNumber,
+        violationType: violations,
+        severity,
+        action: agentDecision.action,
+        estimatedCost: chosenImpact.estimatedCost,
+        riskLevel: chosenImpact.riskLevel as 'low' | 'medium' | 'high',
+        recommendation: chosenImpact.recommendation,
+        reasoning: agentDecision.reasoning,
+        confidence: agentDecision.confidence,
+        extractedData: visionStep.extractedData,
+      };
+      console.log('[AGENT] Saving incident:', savedIncident.id, 'Bag:', bagNumber, 'Severity:', severity);
+      saveIncident(savedIncident);
+      console.log('[AGENT] Incident saved. Total incidents:', getIncidents().length);
 
       this.callbacks.onDecision(finalDecision);
       return finalDecision;

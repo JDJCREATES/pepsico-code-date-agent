@@ -1,14 +1,16 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import DemoControls from "./components/DemoControls";
 import AgentBoard from "./components/AgentBoard";
 import CameraFeed from "./components/CameraFeed";
 import FinalDecision from "./components/FinalDecision";
+import IncidentHistorySidebar from "./components/IncidentHistorySidebar";
 import { AgentStep, FinalDecision as FinalDecisionType, StreamMessage } from "./types/agent";
-import { IMAGE_CATALOG, getImageSequenceForDemo, ImageMetadata } from "./lib/imageCatalog";
-import { imageUrlToBase64 } from "./lib/imageUtils";
+import { generateImageBatch, GeneratedImage } from "./lib/codeDateImageGenerator";
+import { getIncidents } from "./lib/incidentStorage";
 import { GiChipsBag } from "react-icons/gi";
+import { MdHistory } from "react-icons/md";
 
 export default function Home() {
   const [isRunning, setIsRunning] = useState(false);
@@ -17,9 +19,37 @@ export default function Home() {
   const [finalDecision, setFinalDecision] = useState<FinalDecisionType | null>(null);
   const [bagCounter, setBagCounter] = useState(0);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>([]);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const [delayBetweenImages, setDelayBetweenImages] = useState(2000);
+  const [pauseOnEach, setPauseOnEach] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const pauseResolverRef = useRef<(() => void) | null>(null);
+
+  // Generate images on mount
+  useEffect(() => {
+    const generate = async () => {
+      setIsGenerating(true);
+      try {
+        const images = await generateImageBatch(50);
+        setGeneratedImages(images);
+      } catch (error) {
+        console.error('Failed to generate images:', error);
+      } finally {
+        setIsGenerating(false);
+      }
+    };
+    generate();
+  }, []);
 
   const startDemo = async (scenario: string) => {
+    if (generatedImages.length === 0) {
+      console.error('No images generated yet - still generating...');
+      return;
+    }
+
     setIsRunning(true);
     setBagCounter(0);
     setCurrentImageIndex(0);
@@ -27,30 +57,21 @@ export default function Home() {
     // Create abort controller for stopping
     abortControllerRef.current = new AbortController();
 
-    // Get image sequence (each image repeated 5 times)
-    const imageSequence = getImageSequenceForDemo(IMAGE_CATALOG);
-
     try {
-      for (let i = 0; i < imageSequence.length; i++) {
+      for (let i = 0; i < generatedImages.length; i++) {
         // Check if stopped
         if (abortControllerRef.current?.signal.aborted) {
           break;
         }
 
-        const imageMetadata = imageSequence[i];
+        const generatedImage = generatedImages[i];
         setCurrentImageIndex(i);
-        setCurrentImage(imageMetadata.path);
+        setCurrentImage(generatedImage.dataUrl);
         setAgentSteps([]);
         setFinalDecision(null);
 
-        // Convert image to base64
-        let imageBase64: string;
-        try {
-          imageBase64 = await imageUrlToBase64(imageMetadata.path);
-        } catch (error) {
-          console.error('Failed to load image:', imageMetadata.path);
-          continue;
-        }
+        // Extract base64 from data URL (remove data:image/jpeg;base64, prefix)
+        const imageBase64 = generatedImage.dataUrl.replace(/^data:image\/\w+;base64,/, '');
 
         // Analyze the image
         const response = await fetch("/api/demo", {
@@ -62,8 +83,9 @@ export default function Home() {
             scenario,
             imageBase64,
             metadata: {
-              productType: imageMetadata.productType,
-              expectedViolations: imageMetadata.violations,
+              productType: 'cheetos',
+              expectedViolations: generatedImage.violations,
+              codeDate: generatedImage.config,
             }
           }),
           signal: abortControllerRef.current.signal,
@@ -113,8 +135,18 @@ export default function Home() {
           }
         }
 
-        // Wait between images to show results
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        // Wait between images
+        if (pauseOnEach) {
+          // Manual advance mode - wait for user to click Next
+          setIsPaused(true);
+          await new Promise<void>(resolve => {
+            pauseResolverRef.current = resolve;
+          });
+          setIsPaused(false);
+        } else if (delayBetweenImages > 0) {
+          // Auto mode with delay
+          await new Promise(resolve => setTimeout(resolve, delayBetweenImages));
+        }
       }
     } catch (error: any) {
       if (error.name !== 'AbortError') {
@@ -122,7 +154,9 @@ export default function Home() {
       }
     } finally {
       setIsRunning(false);
+      setIsPaused(false);
       abortControllerRef.current = null;
+      pauseResolverRef.current = null;
     }
   };
 
@@ -130,7 +164,18 @@ export default function Home() {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
+    if (pauseResolverRef.current) {
+      pauseResolverRef.current();
+    }
     setIsRunning(false);
+    setIsPaused(false);
+  };
+
+  const nextImage = () => {
+    if (pauseResolverRef.current) {
+      pauseResolverRef.current();
+      pauseResolverRef.current = null;
+    }
   };
 
   return (
@@ -141,7 +186,7 @@ export default function Home() {
           {/* Title */}
           <div className="hidden md:block">
             <div className="flex items-center gap-3 mb-2">
-              <GiChipsBag size={48} className="text-blue-600 dark:text-blue-400" />
+              <GiChipsBag size={48} color="#2563eb" />
               <h1 className="text-2xl md:text-4xl font-bold text-zinc-900 dark:text-white">
                 PepsiCo Code Date Quality Control Agent
               </h1>
@@ -150,6 +195,25 @@ export default function Home() {
               An AI agent that analyzes security camera footage to identify code
               date violations in real-time.
             </p>
+            <div className="flex items-center gap-4 mt-4">
+              {isGenerating && (
+                <p className="text-xs text-blue-600 dark:text-blue-400">
+                  🥔 Generating 50 test images...
+                </p>
+              )}
+              {!isGenerating && generatedImages.length > 0 && (
+                <p className="text-xs text-green-600 dark:text-green-400">
+                  ✓ {generatedImages.length} test images ready
+                </p>
+              )}
+              <button
+                onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+                className="flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-colors"
+              >
+                <MdHistory size={16} />
+                History ({getIncidents().length})
+              </button>
+            </div>
           </div>
           
           {/* Mobile agent steps above camera */}
@@ -166,14 +230,21 @@ export default function Home() {
           <div className="hidden md:grid md:grid-cols-2 gap-4">
             <DemoControls
               isRunning={isRunning}
+              isPaused={isPaused}
               onStart={() => startDemo('default')}
               onStop={stopDemo}
+              onNext={nextImage}
               onReset={() => {
                 setAgentSteps([]);
                 setFinalDecision(null);
                 setCurrentImage(null);
                 setIsRunning(false);
+                setIsPaused(false);
               }}
+              delayBetweenImages={delayBetweenImages}
+              onDelayChange={setDelayBetweenImages}
+              pauseOnEach={pauseOnEach}
+              onPauseOnEachChange={setPauseOnEach}
             />
             <FinalDecision decision={finalDecision} />
           </div>
@@ -194,19 +265,26 @@ export default function Home() {
           <div className="w-full">
             <DemoControls
               isRunning={isRunning}
+              isPaused={isPaused}
               onStart={() => startDemo('default')}
               onStop={stopDemo}
+              onNext={nextImage}
               onReset={() => {
                 setAgentSteps([]);
                 setFinalDecision(null);
                 setCurrentImage(null);
                 setIsRunning(false);
+                setIsPaused(false);
               }}
+              delayBetweenImages={delayBetweenImages}
+              onDelayChange={setDelayBetweenImages}
+              pauseOnEach={pauseOnEach}
+              onPauseOnEachChange={setPauseOnEach}
             />
           </div>
           <div className="mt-4 pb-4">
             <div className="flex items-center gap-2 mb-2">
-              <GiChipsBag size={32} className="text-blue-600 dark:text-blue-400" />
+              <GiChipsBag size={32} color="#2563eb" />
               <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">
                 PepsiCo Code Date Quality Control Agent
               </h1>
@@ -215,9 +293,23 @@ export default function Home() {
               An AI agent that analyzes security camera footage to identify code
               date violations in real-time.
             </p>
+            <button
+              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+              className="mt-4 flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-colors"
+            >
+              <MdHistory size={16} />
+              History ({getIncidents().length})
+            </button>
           </div>
         </section>
       </main>
+
+      {/* Incident History Sidebar */}
+      <IncidentHistorySidebar
+        incidents={getIncidents()}
+        isOpen={isSidebarOpen}
+        onClose={() => setIsSidebarOpen(false)}
+      />
     </div>
   );
 }
