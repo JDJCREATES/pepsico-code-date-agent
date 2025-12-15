@@ -36,16 +36,20 @@ export async function POST(request: NextRequest) {
                 encoder.encode(`data: ${JSON.stringify(message)}\n\n`)
               );
               
-              // Stream incident data separately so client can save it
-              if (decision.status === 'fail' && decision.agentReasoning) {
+              // Stream incident data for ALL decisions (pass and fail)
+              if (decision.agentReasoning) {
+                const severity = decision.status === 'pass' ? 'none' as const :
+                                decision.violations.includes('code_date_on_bellmark') ? 'critical' as const :
+                                decision.violations.includes('code_date_off_bellmark') || 
+                                decision.violations.includes('faded_print') ? 'moderate' as const : 
+                                'minor' as const;
+                
                 const incidentMessage: StreamMessage = {
                   type: 'incident' as any,
                   incident: {
                     bagNumber,
                     violations: decision.violations,
-                    severity: decision.violations.includes('code_date_on_bellmark') ? 'critical' as const :
-                              decision.violations.includes('code_date_off_bellmark') ? 'moderate' as const : 
-                              'minor' as const,
+                    severity,
                     action: decision.agentReasoning.action,
                     estimatedCost: decision.agentReasoning.businessImpact.estimatedCost,
                     riskLevel: decision.agentReasoning.businessImpact.riskLevel,

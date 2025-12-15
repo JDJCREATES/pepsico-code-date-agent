@@ -184,7 +184,7 @@ Code date format:
 - Line 3: PMO number and Time (e.g., "37 13:08")
 
 Quality checks:
-- Position: Is code date near bellmark (quality seal)? NOT on it?
+- Position: Code date MUST be directly below the bellmark (quality seal), within about 0.5 inches. If it's significantly off-center horizontally or vertically displaced by more than half an inch, mark as "off_bellmark". If overlapping the bellmark itself, mark as "on_bellmark".
 - Print quality: Clear and readable? Not faded?
 
 Return JSON:
@@ -297,11 +297,11 @@ Return JSON:
           status: 'pass',
           confidence: 0.95,
           violations: ['none'],
-          reason: 'Product meets all PepsiCo quality standards. Continue production.',
+          reason: `PASS: Code date properly positioned below bellmark, all components visible and legible. PMO ${visionData.plantCode || '37'}, Line ${visionData.lineNumber || '3'}.`,
           extractedData: visionStep.extractedData,
           agentReasoning: {
             action: 'continue',
-            reasoning: 'No quality issues detected. Product is compliant.',
+            reasoning: 'All quality standards met: positioning correct, print quality good, all components present.',
             confidence: 0.95,
             businessImpact: {
               estimatedCost: 0,
@@ -509,11 +509,22 @@ Respond with JSON:
       decisionStep.reasoning = `Action: ${agentDecision.action.toUpperCase()} - ${agentDecision.reasoning}`;
       await this.emitStep(decisionStep);
 
+      // Build precise violation description
+      const violationDetails = violations.map(v => {
+        if (v === 'code_date_on_bellmark') return 'Code date overlapping bellmark seal';
+        if (v === 'code_date_off_bellmark') return 'Code date positioning off-center';
+        if (v === 'faded_print') return visionData.printQuality === 'unreadable' ? 'Code date unreadable (severely faded)' : 'Code date faded (reduced legibility)';
+        if (v === 'missing_date') return 'Date line missing or unreadable';
+        if (v === 'missing_time') return 'Time stamp missing or unreadable';
+        if (v === 'missing_pmo') return 'PMO number missing or unreadable';
+        return v.replace(/_/g, ' ');
+      }).join('; ');
+
       const finalDecision: FinalDecision = {
         status: 'fail',
         confidence: agentDecision.confidence,
         violations,
-        reason: `${severity.toUpperCase()} VIOLATION: ${violations.join(', ')}. Agent chose: ${agentDecision.action.replace('_', ' ').toUpperCase()}`,
+        reason: `${severity.toUpperCase()}: ${violationDetails}. Action: ${agentDecision.action.replace('_', ' ').toUpperCase()}`,
         extractedData: visionStep.extractedData,
         agentReasoning,
       };

@@ -40,17 +40,17 @@ export function generateRandomCodeDate(): CodeDateConfig {
   const hour = String(Math.floor(Math.random() * 24)).padStart(2, '0');
   const minute = String(Math.floor(Math.random() * 60)).padStart(2, '0');
   
-  // Quality issues - 15% chance of problems (reduced from 20%)
+  // Quality issues - 10% chance of problems (realistic production rate)
   const qualityRoll = Math.random();
   let quality: 'good' | 'faded' | 'unreadable' = 'good';
-  if (qualityRoll < 0.03) quality = 'unreadable';
-  else if (qualityRoll < 0.15) quality = 'faded';
+  if (qualityRoll < 0.02) quality = 'unreadable'; // 2%
+  else if (qualityRoll < 0.10) quality = 'faded'; // 8%
   
-  // Position issues - 10% chance of problems (reduced from 15%)
+  // Position issues - 8% chance of problems (realistic production rate)
   const positionRoll = Math.random();
   let position: 'correct' | 'off_bellmark' | 'on_bellmark' = 'correct';
-  if (positionRoll < 0.03) position = 'on_bellmark'; // Critical!
-  else if (positionRoll < 0.10) position = 'off_bellmark';
+  if (positionRoll < 0.02) position = 'on_bellmark'; // 2% - Critical!
+  else if (positionRoll < 0.08) position = 'off_bellmark'; // 6% - Moderate
   
   return {
     date: `${day}${month}${year}`,
@@ -104,17 +104,16 @@ export async function generateCodeDateOverlay(
       
       // Apply quality effects
       let opacity = 1.0;
-      let fontSize = Math.floor(canvas.width * 0.05); // Scaled up from 0.04 to 0.05
+      let fontSize = Math.floor(canvas.width * 0.06); // Scaled up from 0.05 to 0.06
       
       if (config.quality === 'faded') {
-        opacity = 0.55;
+        opacity = 0.40; // More faded - was 0.55
       } else if (config.quality === 'unreadable') {
-        opacity = 0.3;
-        fontSize = Math.floor(fontSize * 0.8);
+        opacity = 0.20; // Much more faded - was 0.3
+        fontSize = Math.floor(fontSize * 0.75); // Smaller too
       }
       
       // Draw code date text - BLACK text on the orange/red bag
-      ctx.globalAlpha = opacity;
       ctx.fillStyle = '#000000';
       ctx.font = `bold ${fontSize}px "Courier New", monospace`;
       ctx.textAlign = 'center'; // Center the text
@@ -124,14 +123,31 @@ export async function generateCodeDateOverlay(
       console.log('[IMG-GEN] Drawing code date at:', x, y, 'fontSize:', fontSize, 'opacity:', opacity);
       console.log('[IMG-GEN] Date:', config.date, 'Code:', config.codeLine, 'Time:', config.time);
       
-      // Line 1: Date (22FEB2022)
-      ctx.fillText(config.date, x, y);
-      
-      // Line 2: Code line (137133193) - all smashed together
-      ctx.fillText(config.codeLine, x, y + lineHeight);
-      
-      // Line 3: PMO 37 + Time (37 13:08)
-      ctx.fillText(`37 ${config.time}`, x, y + lineHeight * 2);
+      // For faded text, randomly fade individual characters more
+      if (config.quality === 'faded' || config.quality === 'unreadable') {
+        const lines = [config.date, config.codeLine, `37 ${config.time}`];
+        lines.forEach((line, lineIndex) => {
+          const chars = line.split('');
+          let currentX = x - (ctx.measureText(line).width / 2);
+          
+          chars.forEach((char) => {
+            // Random opacity variation for each character in faded text
+            const charOpacity = config.quality === 'unreadable' 
+              ? opacity * (0.3 + Math.random() * 0.4) // 30-70% of base opacity
+              : opacity * (0.7 + Math.random() * 0.3); // 70-100% of base opacity
+            
+            ctx.globalAlpha = charOpacity;
+            ctx.fillText(char, currentX, y + (lineHeight * lineIndex));
+            currentX += ctx.measureText(char).width;
+          });
+        });
+      } else {
+        // Normal quality - draw solid
+        ctx.globalAlpha = opacity;
+        ctx.fillText(config.date, x, y);
+        ctx.fillText(config.codeLine, x, y + lineHeight);
+        ctx.fillText(`37 ${config.time}`, x, y + lineHeight * 2);
+      }
       
       // Determine violations
       const violations: string[] = [];
@@ -166,17 +182,28 @@ export async function generateCodeDateOverlay(
 export async function generateImageBatch(count: number = 10): Promise<GeneratedImage[]> {
   console.log(`[IMG-GEN] Starting batch generation of ${count} images...`);
   
-  const baseImages = [
-    '/code-date-images/base_cheeto_film.jpg',
-    '/code-date-images/base_cheeto_film_miscalibrated_left.jpg',
-    '/code-date-images/base_cheeto_film_miscalibrated_right.jpg',
-  ];
+  const baseImages = {
+    normal: '/code-date-images/base_cheeto_film.jpg',
+    left: '/code-date-images/base_cheeto_film_miscalibrated_left.jpg',
+    right: '/code-date-images/base_cheeto_film_miscalibrated_right.jpg',
+  };
+  
+  // Use miscalibrated images sparingly - only 1-2 times each in the batch
+  const leftIndexes = new Set([Math.floor(Math.random() * count)]);
+  const rightIndexes = new Set([Math.floor(Math.random() * count)]);
+  // Possibly add a second occurrence for each
+  if (Math.random() > 0.5) leftIndexes.add(Math.floor(Math.random() * count));
+  if (Math.random() > 0.5) rightIndexes.add(Math.floor(Math.random() * count));
   
   const results: GeneratedImage[] = [];
   
   for (let i = 0; i < count; i++) {
-    const baseImage = baseImages[i % baseImages.length];
     const config = generateRandomCodeDate();
+    
+    // Select base image - mostly normal, with occasional miscalibration
+    let baseImage = baseImages.normal;
+    if (leftIndexes.has(i)) baseImage = baseImages.left;
+    else if (rightIndexes.has(i)) baseImage = baseImages.right;
     
     console.log(`[IMG-GEN] Generating image ${i + 1}/${count}:`, {
       baseImage,

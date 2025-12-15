@@ -67,6 +67,8 @@ export default function IncidentHistorySidebar({ incidents, isOpen, onClose }: I
                   ? 'border-red-500'
                   : incident.severity === 'moderate'
                   ? 'border-yellow-500'
+                  : incident.severity === 'none'
+                  ? 'border-green-500'
                   : 'border-blue-500'
               }`}
             >
@@ -86,10 +88,12 @@ export default function IncidentHistorySidebar({ incidents, isOpen, onClose }: I
                       ? 'bg-red-500/20 text-red-400'
                       : incident.severity === 'moderate'
                       ? 'bg-yellow-500/20 text-yellow-400'
+                      : incident.severity === 'none'
+                      ? 'bg-green-500/20 text-green-400'
                       : 'bg-blue-500/20 text-blue-400'
                   }`}
                 >
-                  {incident.severity.toUpperCase()}
+                  {incident.severity === 'none' ? 'PASS' : incident.severity.toUpperCase()}
                 </div>
               </div>
 

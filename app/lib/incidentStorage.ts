@@ -4,7 +4,7 @@ export interface SavedIncident {
   timestamp: string;
   bagNumber: number;
   violationType: string[];
-  severity: 'minor' | 'moderate' | 'critical';
+  severity: 'none' | 'minor' | 'moderate' | 'critical';
   action: 'continue' | 'alert_qa' | 'stop_line' | 'hold_batch';
   estimatedCost: number;
   riskLevel: 'low' | 'medium' | 'high';
