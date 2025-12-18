@@ -12,7 +12,7 @@ export const AGENT_STEPS = [
   {
     id: 'validation',
     name: 'Rules Validation',
-    description: 'Checking compliance with PepsiCo quality standards',
+    description: 'Checking compliance with quality standards',
     nodeType: 'reasoning' as NodeType,
     parentId: 'vision-analysis',
   },
@@ -54,10 +54,27 @@ export type StepId = typeof AGENT_STEPS[number]['id'];
 export const BUSINESS_DATA = {
   lineStopCost: 15000, // $15k per hour
   qaAlertCost: 500, // $500 per alert
-  violationFineRisk: 50000, // $50k potential fine
+  reworkCostMultiplier: 3.5, // 3.5x original production cost
+  batchHoldCost: 200, // $200 per day storage/investigation
+  
+  // Tiered penalty structure
+  penalties: {
+    minor: 5000, // $5k - state level fine
+    moderate: 25000, // $25k - warning letter + remediation
+    critical: 100000, // $100k - consent decree risk
+  },
+  
+  // Recall risk calculation
+  recallRisk: {
+    minor: 0, // No recall risk
+    moderate: 500000, // $500k potential recall
+    critical: 5000000, // $5M+ recall + brand damage
+  },
+  
   plantCodes: {
-    '92': 'Frito-Lay Rosenberg, TX',
-    '42': 'Frito-Lay Casa Grande, AZ',
-    '67': 'Frito-Lay Modesto, CA',
+    '87': 'Production Facility 87',
+    '92': 'Production Facility 92',
+    '42': 'Production Facility 42',
+    '67': 'Production Facility 67',
   },
 };

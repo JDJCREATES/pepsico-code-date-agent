@@ -97,7 +97,7 @@ export default function Home() {
             scenario,
             imageBase64,
             metadata: {
-              productType: 'cheetos',
+              productType: 'chips',
               expectedViolations: generatedImage.violations,
               codeDate: generatedImage.config,
             }
@@ -229,7 +229,7 @@ export default function Home() {
             <div className="flex items-center gap-3 mb-2">
               <GiChipsBag size={48} color="#2563eb" />
               <h1 className="text-2xl md:text-4xl font-bold text-zinc-900 dark:text-white">
-                PepsiCo Code Date Quality Control Agent
+                Code Date Quality Control Agent
               </h1>
             </div>
             <p className="text-sm md:text-base text-zinc-600 dark:text-zinc-400">
@@ -313,7 +313,7 @@ export default function Home() {
             <div className="flex items-center gap-2 mb-2">
               <GiChipsBag size={32} color="#2563eb" />
               <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">
-                PepsiCo Code Date Quality Control Agent
+                Code Date Quality Control Agent
               </h1>
             </div>
             <p className="text-sm text-zinc-600 dark:text-zinc-400">

@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "PepsiCo Code Date Agent",
-  description: "Created by @JDJCREATES as a prototype for PepsiCo to showcase the capabilities of modern AI agents.",
+  title: "Code Date Quality Control Agent",
+  description: "An AI-powered quality control system for automated code date inspection in food manufacturing.",
 };
 
 export default function RootLayout({

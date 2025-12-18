@@ -17,28 +17,32 @@ export interface GeneratedImage {
 }
 
 // Generate random code date
-export function generateRandomCodeDate(): CodeDateConfig {
+export function generateRandomCodeDate(bagNumber: number = 0): CodeDateConfig {
   const now = new Date();
   const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
   
-  // Random date within last 60 days
-  const daysAgo = Math.floor(Math.random() * 60);
+  // Random date within last 84 days of 2026
+  const daysAgo = Math.floor(Math.random() * 84);
   const date = new Date(now.getTime() - daysAgo * 24 * 60 * 60 * 1000);
   const day = String(date.getDate()).padStart(2, '0');
   const month = months[date.getMonth()];
-  const year = date.getFullYear();
+  const year = 2026;
+  
+  // Calculate Julian day (day of year, 001-365/366)
+  const startOfYear = new Date(2026, 0, 1);
+  const dayOfYear = Math.floor((date.getTime() - startOfYear.getTime()) / (24 * 60 * 60 * 1000)) + 1;
+  const julian = String(dayOfYear).padStart(3, '0');
   
   // Code line: Day/Plant/Shift/Julian/Line - all smashed together
-  // This is Line 3, Plant 37
-  const dayOfWeek = Math.floor(Math.random() * 7) + 1;
-  const plantCode = '37'; // Fixed plant code
+  // This is Line 3, Plant 87, PMO 37
+  const dayOfWeek = '3'; // Fixed day
+  const plantCode = '87'; // Plant 87
   const shift = Math.floor(Math.random() * 3) + 1;
-  const julian = Math.floor(Math.random() * 365) + 1;
   const line = '3'; // Fixed line number
   
-  // Time
-  const hour = String(Math.floor(Math.random() * 24)).padStart(2, '0');
-  const minute = String(Math.floor(Math.random() * 60)).padStart(2, '0');
+  // Time - use current real time for realistic production stamps
+  const hour = String(now.getHours()).padStart(2, '0');
+  const minute = String(now.getMinutes()).padStart(2, '0');
   
   // Quality issues - 10% chance of problems (realistic production rate)
   const qualityRoll = Math.random();
@@ -63,7 +67,7 @@ export function generateRandomCodeDate(): CodeDateConfig {
 
 // Generate code date image overlay
 export async function generateCodeDateOverlay(
-  baseImagePath: string,
+  baseImageDataUrl: string,
   config: CodeDateConfig,
   cameraVariation?: { vertical: number; horizontal: number }
 ): Promise<GeneratedImage> {
@@ -76,7 +80,6 @@ export async function generateCodeDateOverlay(
     }
 
     const img = new Image();
-    img.crossOrigin = 'anonymous';
     
     img.onload = () => {
       canvas.width = img.width;
@@ -84,12 +87,18 @@ export async function generateCodeDateOverlay(
       
       console.log('[IMG-GEN] Canvas size:', canvas.width, 'x', canvas.height);
       
-      // Draw base image
-      ctx.drawImage(img, 0, 0);
-      
       // Apply camera variation (simulates slight camera movement/vibration)
       const cameraShiftX = cameraVariation?.horizontal || 0;
       const cameraShiftY = cameraVariation?.vertical || 0;
+      
+      // Calculate pixel shifts for the image
+      const imgShiftX = canvas.width * cameraShiftX;
+      const imgShiftY = canvas.height * cameraShiftY;
+      
+      console.log('[IMG-GEN] Camera shift:', { horizontal: cameraShiftX, vertical: cameraShiftY, pixelsX: imgShiftX, pixelsY: imgShiftY });
+      
+      // Draw base image with camera shift
+      ctx.drawImage(img, imgShiftX, imgShiftY);
       
       // Calculate position based on config
       // Bellmark is the quality seal at top
@@ -185,12 +194,12 @@ export async function generateCodeDateOverlay(
     };
     
     img.onerror = (error) => {
-      console.error('[IMG-GEN] Failed to load image:', baseImagePath, error);
-      reject(new Error(`Failed to load base image: ${baseImagePath}`));
+      console.error('[IMG-GEN] Failed to load image:', error);
+      reject(new Error('Failed to load base image'));
     };
     
-    console.log('[IMG-GEN] Loading base image:', baseImagePath);
-    img.src = baseImagePath;
+    console.log('[IMG-GEN] Loading base image from data URL');
+    img.src = baseImageDataUrl;
   });
 }
 
@@ -198,11 +207,9 @@ export async function generateCodeDateOverlay(
 export async function generateImageBatch(count: number = 10): Promise<GeneratedImage[]> {
   console.log(`[IMG-GEN] Starting batch generation of ${count} images...`);
   
-  const baseImages = {
-    normal: '/code-date-images/base_cheeto_film.jpg',
-    left: '/code-date-images/base_cheeto_film_miscalibrated_left.jpg',
-    right: '/code-date-images/base_cheeto_film_miscalibrated_right.jpg',
-  };
+  // Generate base chip bag images dynamically
+  const { generateBaseImages } = await import('./chipBagImageGenerator');
+  const baseImages = await generateBaseImages();
   
   // Use miscalibrated images sparingly - only 1-2 times each in the batch
   const leftIndexes = new Set([Math.floor(Math.random() * count)]);
@@ -220,7 +227,7 @@ export async function generateImageBatch(count: number = 10): Promise<GeneratedI
   const results: GeneratedImage[] = [];
   
   for (let i = 0; i < count; i++) {
-    const config = generateRandomCodeDate();
+    const config = generateRandomCodeDate(i);
     
     // Select base image - mostly normal, with occasional miscalibration
     let baseImage = baseImages.normal;
@@ -249,7 +256,7 @@ export async function generateImageBatch(count: number = 10): Promise<GeneratedI
     }
     
     console.log(`[IMG-GEN] Generating image ${i + 1}/${count}:`, {
-      baseImage,
+      baseImageType: leftIndexes.has(i) ? 'left' : rightIndexes.has(i) ? 'right' : 'normal',
       position: config.position,
       quality: config.quality,
       cameraVariation,

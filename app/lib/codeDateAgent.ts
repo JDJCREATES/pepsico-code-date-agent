@@ -7,23 +7,45 @@ import { getIncidentsByDateRange } from "./incidentStorage";
 
 // LangChain tools for business decision-making
 const calculateBusinessImpactTool = tool(
-  async ({ action, violationSeverity, plantCode }: { action: AgentAction, violationSeverity: string, plantCode: string }) => {
+  async ({ action, violationSeverity, plantCode, violationType }: { action: AgentAction, violationSeverity: string, plantCode: string, violationType: string }) => {
     let estimatedCost = 0;
     let riskLevel: 'low' | 'medium' | 'high' | 'critical' = 'low';
     let recommendation = '';
+    let recallRisk = 0;
+    let penaltyRisk = 0;
+    let reworkCost = 0;
 
+    // Determine severity level for calculations
+    const severity = violationSeverity.toLowerCase() as 'minor' | 'moderate' | 'critical';
+    
+    // Calculate penalty and recall risks based on severity
+    if (severity === 'critical') {
+      penaltyRisk = BUSINESS_DATA.penalties.critical;
+      recallRisk = BUSINESS_DATA.recallRisk.critical;
+    } else if (severity === 'moderate') {
+      penaltyRisk = BUSINESS_DATA.penalties.moderate;
+      recallRisk = BUSINESS_DATA.recallRisk.moderate;
+    } else if (severity === 'minor') {
+      penaltyRisk = BUSINESS_DATA.penalties.minor;
+      recallRisk = BUSINESS_DATA.recallRisk.minor;
+    }
+
+    // Calculate action costs
     if (action === 'stop_line') {
       estimatedCost = BUSINESS_DATA.lineStopCost;
-      riskLevel = violationSeverity === 'critical' ? 'critical' : 'high';
-      recommendation = `Line stop costs $${estimatedCost}/hr but prevents potential $${BUSINESS_DATA.violationFineRisk} fine`;
+      riskLevel = severity === 'critical' ? 'critical' : 'high';
+      recommendation = `Line stop costs $${estimatedCost.toLocaleString()}/hr but prevents potential $${(penaltyRisk + recallRisk).toLocaleString()} in penalties and recalls`;
     } else if (action === 'alert_qa') {
       estimatedCost = BUSINESS_DATA.qaAlertCost;
-      riskLevel = violationSeverity === 'critical' ? 'high' : 'medium';
-      recommendation = `QA alert is cost-effective at $${estimatedCost}, suitable for non-critical issues`;
+      // Add rework cost if manual inspection/rework needed
+      reworkCost = Math.floor(BUSINESS_DATA.qaAlertCost * BUSINESS_DATA.reworkCostMultiplier);
+      estimatedCost += reworkCost;
+      riskLevel = severity === 'critical' ? 'high' : 'medium';
+      recommendation = `QA alert costs $${estimatedCost.toLocaleString()} (includes $${reworkCost.toLocaleString()} rework), accepts moderate risk`;
     } else if (action === 'hold_batch') {
-      estimatedCost = BUSINESS_DATA.lineStopCost * 0.25;
+      estimatedCost = BUSINESS_DATA.batchHoldCost + (BUSINESS_DATA.lineStopCost * 0.25);
       riskLevel = 'medium';
-      recommendation = `Batch hold balances cost vs risk for moderate violations`;
+      recommendation = `Batch hold costs $${estimatedCost.toLocaleString()}/day (storage + investigation), balanced approach for moderate violations`;
     } else {
       estimatedCost = 0;
       riskLevel = 'low';
@@ -38,15 +60,21 @@ const calculateBusinessImpactTool = tool(
       riskLevel,
       recommendation,
       plantInfo: `${plantName} (Code: ${plantCode})`,
+      penaltyRisk,
+      recallRisk,
+      totalRisk: penaltyRisk + recallRisk,
+      reworkCost,
+      costBreakdown: `Action: $${estimatedCost.toLocaleString()} | Penalty Risk: $${penaltyRisk.toLocaleString()} | Recall Risk: $${recallRisk.toLocaleString()}`,
     };
   },
   {
     name: "calculate_business_impact",
-    description: "Calculate business impact and cost of actions: stop_line (expensive but safe), alert_qa (cheap but riskier), hold_batch (moderate), or continue (free)",
+    description: "Calculate business impact and cost of actions: stop_line (expensive but safe), alert_qa (cheap but riskier with rework costs), hold_batch (moderate with storage costs), or continue (free). Includes penalty risk, recall risk, and rework cost calculations based on severity.",
     schema: z.object({
       action: z.enum(['continue', 'alert_qa', 'stop_line', 'hold_batch']),
       violationSeverity: z.string(),
       plantCode: z.string(),
+      violationType: z.string(),
     }),
   }
 );
@@ -115,7 +143,7 @@ const logViolationTool = tool(
       logId,
       timestamp,
       message: `Logged to QMS: ${violationType} (${severity})`,
-      database: 'PepsiCo-QMS-Production',
+      database: 'QMS-Production',
     };
   },
   {
@@ -176,7 +204,7 @@ export class CodeDateAgent {
       };
       await this.emitStep(visionStep);
 
-      const visionPrompt = `Analyze this Frito-Lay product image. Extract ALL visible text and assess quality.
+      const visionPrompt = `Analyze this snack food product image. Extract ALL visible text and assess quality.
 
 Code date format:
 - Line 1: Date (e.g., "22FEB2022")
@@ -248,7 +276,7 @@ Return JSON:
       const validationStep: AgentStep = {
         id: 'validation',
         name: 'Rules Validation',
-        description: 'Checking compliance with PepsiCo quality standards',
+        description: 'Checking compliance with quality standards',
         status: 'running',
         nodeType: 'reasoning',
         parentId: 'vision-analysis',
@@ -342,21 +370,27 @@ Return JSON:
       await this.emitStep(impactStep);
 
       // Calculate multiple options
+      const violationType = violations.join(', ');
+      
       const stopImpact = await calculateBusinessImpactTool.invoke({
         action: 'stop_line',
         violationSeverity: severity,
         plantCode: visionData.plantCode || '92',
+        violationType,
       });
 
       const alertImpact = await calculateBusinessImpactTool.invoke({
         action: 'alert_qa',
         violationSeverity: severity,
         plantCode: visionData.plantCode || '92',
+        violationType,
       });
 
       impactStep.status = 'completed';
       impactStep.toolResult = { stopImpact, alertImpact };
-      impactStep.reasoning = `Stop: $${stopImpact.estimatedCost} (${stopImpact.riskLevel}), Alert: $${alertImpact.estimatedCost} (${alertImpact.riskLevel})`;
+      const stopData = 'estimatedCost' in stopImpact ? stopImpact : JSON.parse(stopImpact.content as string);
+      const alertData = 'estimatedCost' in alertImpact ? alertImpact : JSON.parse(alertImpact.content as string);
+      impactStep.reasoning = `Stop: $${stopData.estimatedCost} (${stopData.riskLevel}), Alert: $${alertData.estimatedCost} (${alertData.riskLevel})`;
       await this.emitStep(impactStep);
 
       // Tool 2: Query historical incidents
@@ -433,10 +467,10 @@ ${violations.map(v => `- ${v.replace(/_/g, ' ')}`).join('\n')}
 Severity: ${severity}
 
 BUSINESS IMPACT ANALYSIS:
-- Stop Line: $${stopImpact.estimatedCost}/hr, Risk: ${stopImpact.riskLevel}
-  ${stopImpact.recommendation}
-- Alert QA: $${alertImpact.estimatedCost}, Risk: ${alertImpact.riskLevel}
-  ${alertImpact.recommendation}
+- Stop Line: $${stopData.estimatedCost}/hr, Risk: ${stopData.riskLevel}
+  ${stopData.recommendation}
+- Alert QA: $${alertData.estimatedCost}, Risk: ${alertData.riskLevel}
+  ${alertData.recommendation}
 
 HISTORICAL CONTEXT:
 ${historyData.pattern}
@@ -491,7 +525,7 @@ Respond with JSON:
         }
       }
 
-      const chosenImpact = agentDecision.action === 'stop_line' ? stopImpact : alertImpact;
+      const chosenImpact = agentDecision.action === 'stop_line' ? stopData : alertData;
 
       const agentReasoning: AgentReasoning = {
         action: agentDecision.action,

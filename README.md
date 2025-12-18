@@ -1,19 +1,20 @@
-# PepsiCo Code Date Agent 
-> Created by @JDJCREATES ~ Jacob Jones ~ PMO #37
+# Code Date Quality Control Agent
+> Created by @JDJCREATES ~ Jacob Jones
 
-> AI-powered production line monitoring using multi-agent architecture via Langchain framework
+> AI-powered production line monitoring using multi-agent architecture via LangChain framework
 
 ## Live Demo
-> Input data is simulated 
-> Agentic AI is powered with Openai API via Langchain
-> PepsiCo would need to integrate either on premises LLM or use enterprise solutions such as azure
-> A custom vision agent could be trained for offline use given a large enough dataset
+
+- Input data is simulated with dynamically generated chip bag images
+- Agentic AI powered by OpenAI API via LangChain
+- Food manufacturers can integrate on-premises LLM or enterprise solutions (Azure OpenAI)
+- Custom vision models can be trained offline with sufficient datasets
 
 ## The Problem
 
-**Code date errors cost food manufacturers millions in product recalls
+**Code date errors cost food manufacturers millions in product recalls**
 
-At PepsiCo Frito-Lay:
+In snack food production:
 - Code dates are checked manually every 30 minutes by operators and quality technicians
 - This limits checking and logging code dates to only a few units out of thousands made during a shift
 - No pattern detection or data logging between shifts
@@ -28,6 +29,7 @@ An AI agent system that:
 - Provides explainable reasoning
 
 ## Key Features
+
 - **Real-Time Monitoring** - Continuous code date scanning
 - **Multi-Agent Architecture** - Specialized agents collaborate
 - **Context-Aware Decisions** - Considers product type, shelf life, history
@@ -98,4 +100,4 @@ Jacob Jones
 Packaging Machine Operator & AI Engineer
 
 
-> Built to demonstrate AI agent architecture for PepsiCo's quality control transformation.
+> Built to demonstrate AI agent architecture for quality control transformation in food manufacturing.
